@@ -2,18 +2,20 @@
 
 SafeGDScript supports traits, and with that Godot Sandbox has special support
 for traits-based modding APIs. The traits-based mod loader supplies mods with
-two separate threads which say something like: “Here is what your mod must do,
+two separate traits which say something like: “Here is what your mod must do,
 and here is what it is allowed to ask the game to do.”
 
-A trait contains typed functions, the inputs they accept, and the results they
+A trait contains typed functions, the args they accept, and the results they
 return. The compiler checks those agreements while the mod is being built, and
-then again before running it. In other words, a mod that doesn't implement
-required methods will fail compilation and be quarantined later by the loader.
+then again before running `mod_init`. In other words, a mod that doesn't
+implement required methods will fail compilation and be quarantined later by
+the loader.
 
 The previous Dictionary-based modding example could not use/expose fully typed
 functions by itself, nor would it fail compilation if any requirement was
-missing. Of course, it's a simpler approach and still works, but it's not a
-self-documenting API.
+missing. And finally, it could not tell the game that it needs a function to
+be called in order to work properly. Of course, it's a simpler approach and
+still works, but it's not a self-documenting API.
 
 Only `@abstract` functions in the trait are required to be implemented by mod
 authors:
@@ -96,7 +98,30 @@ support new big features for updates, and mods need to update as well.
 
 ## Newer mods, older APIs
 
+If a mod tries to call an API function the game does not have, it will fail
+loudly at compile-time. This is inherent to traits.
 
+Separately, a mod can ask that the game should call a given function:
+
+```gdscript
+uses ModBrain
+
+@requires_host_hook
+func on_round_finished(won: bool) -> int:
+    return 1 if won else 0
+```
+
+That function would exist at the time the mod was made, and for the game
+version the mod was made for. If the function is never going to get called
+by the game, the mod loader will refuse to load the mod. There can be two
+reasons: The game is too old and never had it, or too new and deprecated
+and then removed it. The mod loader will print an error with the function
+it never intended to call, and fail/quarantine the mod.
+
+The game declares callback support by including it in its obligations trait.
+The game should dispatch it under the documented conditions, such as when a
+round finishes. The loader does not generate dispatch code or require an event
+to occur. The requirement is preserved in precompiled ELFs.
 
 ## Settings
 
@@ -107,7 +132,6 @@ All keys have the `sandbox/mods/` prefix.
 | `obligations_trait`, `api_trait` | Paths to the two SDK traits. Required for loading |
 | `directories` | `res://mods`, `user://mods`. Scan immediate subdirectories |
 | `entry_form` | `auto`, `source`, or `elf`. Auto accepts ELF entries on both hosts and source where the compiler is present |
-| `api_version` | `1`. reject a higher manifest `requires_api` |
 | `node_type` | `Node`. `Node2D` is available for spatial mod hosts |
 | `limits/execution_timeout` | 1 million instructions per call |
 | `limits/memory_max` | 32 MiB |
@@ -117,8 +141,7 @@ All keys have the `sandbox/mods/` prefix.
 | `restricted` | Module export: `mods/**`, comma-separated project-relative globs |
 | `runtime_compiler_template` | Module export: template to select for explicit source mode |
 
-Manifest `[mod]` fields are `id`, `name`, `version`, `entry`, `order`, and
-`requires_api`. `[limits]` can only lower the project ceilings (zero clamps to
+Manifest `[mod]` fields are `id`, `name`, `version`, `entry`, and `order`. `[limits]` can only lower the project ceilings (zero clamps to
 one). IDs are ASCII identifiers, entries are basenames in the mod directory,
 and scan sorts by order then ID. Source entries are limited to 256 KiB, ELF
 entries to 16 MiB. There is no dependency resolver. The game may supply a
@@ -138,16 +161,6 @@ also remain in the PCK, with metadata-bearing ELF siblings for compiler-free
 validation. SDK traits are public, including concrete method bodies. Abstract
 methods require implementations, while concrete methods provide defaults that
 mods may override.
-
-Older precompiled mods may omit concrete callbacks added by a newer SDK and
-still load. Check `mod.has_method("on_round_finished")` before calling an
-optional callback; if absent, keep the game's ordinary behavior. Recompiling
-supplies the current trait default unless the mod overrides it. The loader
-does not inject code into old ELFs or replace their compiled defaults.
-Missing abstract methods and incompatible signatures on present methods still
-fail loading. The game's API object must implement every offered method.
-Restricted mod globs compile with restricted semantics and bake into their own
-directory with checked memory. Normal game scripts keep the release policy.
 
 Source mode needs a selected template built with `sgd_runtime_compiler=yes`.
 Set the custom template in the export preset or set

@@ -2,6 +2,7 @@ uses ModBrain
 var api: ArenaAPI
 func mod_init(granted: ArenaAPI) -> void:
 	api = granted
+@requires_host_hook
 func think(delta: float) -> Vector2:
 	return Vector2(api.time(), delta)
 func mod_deinit() -> void:

@@ -435,7 +435,7 @@ const char *const annotation_names[] = {
 	"export_global_dir", "export_multiline", "export_placeholder", "export_color_no_alpha",
 	"export_node_path", "export_storage", "export_custom", "export_group", "export_subgroup",
 	"export_category", "onready", "tool", "rpc", "test", "icon", "warning_ignore",
-	"warning_ignore_start", "warning_ignore_restore", "static_unload", "abstract",
+	"warning_ignore_start", "warning_ignore_restore", "static_unload", "abstract", "requires_host_hook",
 	nullptr
 };
 

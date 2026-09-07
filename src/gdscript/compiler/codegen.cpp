@@ -8082,6 +8082,8 @@ FunctionSignature CodeGenerator::build_signature(const FunctionDecl& decl) const
 	};
 	sig.has_declaration = true;
 	sig.is_abstract = decl.is_abstract;
+	// Displaced base implementations are private symbols, not host hooks.
+	sig.requires_host_hook = decl.requires_host_hook && decl.chain_name.empty();
 	sig.declared_return = declared(decl.return_type);
 	sig.name = decl.name;
 	sig.line = decl.line;

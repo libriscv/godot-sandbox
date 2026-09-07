@@ -440,6 +440,8 @@ struct FunctionDecl {
 	// `static func` in a class body: lifted without the instance parameter.
 	bool is_static = false;
 	bool is_abstract = false;
+	// The mod requires this callback in the host obligations trait.
+	bool requires_host_hook = false;
 	// `@test`: also published as a test case the host runner can call.
 	bool is_test = false;
 	std::string trait_origin;

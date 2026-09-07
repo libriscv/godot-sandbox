@@ -86,7 +86,6 @@ void SgdModLoader::register_settings() {
 	def("sandbox/mods/runtime_compiler_template", "");
 	def("sandbox/mods/restricted", "mods/**");
 #endif
-	def("sandbox/mods/api_version", 1);
 	def("sandbox/mods/node_type", "Node");
 	for (size_t i = 0; i < 5; ++i) def(String("sandbox/mods/limits/") + limit_names[i], defaults[i]);
 }
@@ -123,13 +122,12 @@ TypedArray<Dictionary> SgdModLoader::scan(const PackedStringArray &dirs) const {
 			if (cfg->load(path.path_join("mod.cfg")) != OK) continue;
 			Dictionary mod;
 			mod["dir"] = path;
-			for (const char *key : {"id", "name", "version", "entry", "order", "requires_api"}) {
+			for (const char *key : {"id", "name", "version", "entry", "order"}) {
 				Variant fallback = String();
 				if (String(key) == "id") fallback = identifier(name);
 				if (String(key) == "name") fallback = name;
 				if (String(key) == "version") fallback = "0";
 				if (String(key) == "order") fallback = 0;
-				if (String(key) == "requires_api") fallback = 1;
 				mod[key] = cfg->get_value("mod", key, fallback);
 			}
 			Dictionary limits;
@@ -236,7 +234,6 @@ Node *SgdModLoader::load(const Dictionary &manifest, Object *api, Node *parent) 
 	last_error = String(); error_line = error_column = 0;
 	if (!id.is_valid_ascii_identifier() || mods.count(id)) return fail(id, "Invalid or duplicate mod id: " + id);
 	if (!api || !parent) return fail(id, "An API object and parent node are required");
-	if (int64_t(manifest.get("requires_api", 1)) > int64_t(setting("sandbox/mods/api_version", 1))) return fail(id, "Mod requires a newer API version");
 	const String entry = manifest.get("entry", "");
 	const String form = entry_form(entry);
 	if (form != "source" && form != "elf") return fail(id, "sandbox/mods/entry_form must be auto, source or elf");
@@ -302,6 +299,8 @@ Node *SgdModLoader::load(const Dictionary &manifest, Object *api, Node *parent) 
 	script->set_mod_source_path(path);
 	// Concrete callbacks are opt-in for already compiled mods
 	const auto &functions = script->get_metadata().functions;
+	const auto hook_errors = gdscript::required_host_hooks(functions, obligations);
+	if (!hook_errors.empty()) return fail(id, "Mod '" + id + "' is incompatible: " + text(hook_errors.front()));
 	obligations.trait_methods.erase(std::remove_if(obligations.trait_methods.begin(), obligations.trait_methods.end(), [&](const auto &method) {
 		return !method.is_abstract && std::none_of(functions.begin(), functions.end(), [&](const auto &f) { return f.name == method.name; });
 	}), obligations.trait_methods.end());

@@ -140,7 +140,7 @@ private:
 	void skip_type_arguments();
 	bool parse_attribute(ExportHint& hint, bool* is_onready = nullptr,
 		std::optional<RPCConfig>* rpc_config = nullptr, bool* is_abstract = nullptr,
-		bool* is_test = nullptr);
+		bool* is_test = nullptr, bool* requires_host_hook = nullptr);
 	bool m_saw_tool = false;
 	ExportSection m_export_section;
 	void hoist_onready_initializers(Program& program);

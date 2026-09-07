@@ -1,4 +1,5 @@
 #include "function_signature.h"
+#include <algorithm>
 #include <cstring>
 
 namespace gdscript {
@@ -118,6 +119,13 @@ std::vector<uint8_t> encode_function_signatures(const std::vector<FunctionSignat
 		for (const auto &param : sig.parameters) type(param.declared_type);
 	}
 
+	// Omit HOOK for ordinary programs so existing ELF bytes stay unchanged.
+	// Older strict decoders reject this extension rather than ignore a demand.
+	if (std::any_of(signatures.begin(), signatures.end(), [](const auto &s) { return s.requires_host_hook; })) {
+		write_scalar<uint32_t>(out, 0x4b4f4f48u); // HOOK
+		write_scalar<uint32_t>(out, uint32_t(signatures.size()));
+		for (const auto &sig : signatures) write_scalar<uint8_t>(out, sig.requires_host_hook);
+	}
 	return out;
 }
 
@@ -255,6 +263,17 @@ bool decode_function_signatures(const uint8_t *data, size_t size,
 			sig.is_abstract = flag();
 			type(sig.declared_return);
 			for (auto &param : sig.parameters) type(param.declared_type);
+		}
+	}
+	if (reader.ok && reader.offset != size) {
+		if (reader.scalar<uint32_t>() != 0x4b4f4f48u || reader.scalar<uint32_t>() != out.size()) {
+			out.clear();
+			return false;
+		}
+		for (auto &sig : out) {
+			const uint8_t value = reader.scalar<uint8_t>();
+			if (value > 1) reader.ok = false;
+			sig.requires_host_hook = value != 0;
 		}
 	}
 	if (!reader.ok || reader.offset != size) {

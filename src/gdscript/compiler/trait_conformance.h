@@ -55,6 +55,27 @@ inline std::vector<std::string> trait_conformance(const std::vector<FunctionSign
 	}
 	return errors;
 }
+// A callback implementation is checked in the same direction as ordinary
+// obligations: it must accept the host's arguments and return what it expects.
+inline std::vector<std::string> required_host_hooks(const std::vector<FunctionSignature> &functions,
+		const ClassSignature &host) {
+	std::vector<std::string> errors;
+	for (const auto &hook : functions) {
+		if (!hook.requires_host_hook) continue;
+		const std::string label = "Required host hook '" + host.name + "." + hook.name + "'";
+		const auto offered = std::find_if(host.trait_methods.begin(), host.trait_methods.end(),
+			[&](const auto &method) { return method.name == hook.name; });
+		if (!host.is_trait || offered == host.trait_methods.end()) {
+			errors.push_back(label + " is not supported by this game (the mod may target a newer API or a removed hook)");
+		} else if (hook.is_static || hook.is_abstract || offered->is_static) {
+			errors.push_back(label + " requires an instance implementation and an instance host declaration");
+		} else {
+			const auto error = validate_trait_signature(&hook, *offered);
+			if (!error.empty()) errors.push_back(label + " is incompatible: " + error);
+		}
+	}
+	return errors;
+}
 inline bool metadata_uses(const std::vector<std::string> &uses,
 		const std::vector<ClassSignature> &classes, const std::string &name) {
 	std::vector<std::string> pending = uses, seen;

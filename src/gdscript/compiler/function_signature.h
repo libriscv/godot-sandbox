@@ -45,6 +45,7 @@ struct FunctionSignature {
 	DeclaredType declared_return;
 	bool has_declaration = false;
 	bool is_abstract = false;
+	bool requires_host_hook = false;
 	std::string name;
 	std::vector<FunctionParameter> parameters;
 	int32_t return_type = FunctionParameter::ANY_TYPE;
