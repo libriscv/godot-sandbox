@@ -88,7 +88,6 @@ void SgdModLoader::register_settings() {
 #endif
 	def("sandbox/mods/api_version", 1);
 	def("sandbox/mods/node_type", "Node");
-	def("sandbox/mods/allow_concrete_sdk_methods", false);
 	for (size_t i = 0; i < 5; ++i) def(String("sandbox/mods/limits/") + limit_names[i], defaults[i]);
 }
 void SgdModLoader::_bind_methods() {
@@ -150,7 +149,6 @@ TypedArray<Dictionary> SgdModLoader::scan(const PackedStringArray &dirs) const {
 bool SgdModLoader::contract(gdscript::ClassSignature &obligations, gdscript::ClassSignature &api, PackedStringArray &sources) {
 	PackedStringArray paths;
 	std::vector<uint64_t> stamps;
-	const bool allow_concrete = setting("sandbox/mods/allow_concrete_sdk_methods", false);
 	for (const char *key : {"sandbox/mods/obligations_trait", "sandbox/mods/api_trait"}) {
 		String path = setting(key, "");
 #if !defined(SGD_RUNTIME_COMPILER) && !defined(SGD_MOD_EXTENSION)
@@ -159,7 +157,7 @@ bool SgdModLoader::contract(gdscript::ClassSignature &obligations, gdscript::Cla
 		paths.push_back(path);
 		stamps.push_back(FileAccess::get_modified_time(path));
 	}
-	if (contract_cached && paths == contract_paths && stamps == contract_stamps && allow_concrete == contract_allow_concrete) {
+	if (contract_cached && paths == contract_paths && stamps == contract_stamps) {
 		obligations = cached_obligations; api = cached_api; sources = cached_sources;
 		return true;
 	}
@@ -205,12 +203,9 @@ bool SgdModLoader::contract(gdscript::ClassSignature &obligations, gdscript::Cla
 		const gdscript::ClassSignature *selected = nullptr;
 		for (const auto &c : info.script_metadata.classes) if (c.is_trait && c.name == info.script_metadata.class_name) selected = &c;
 		if (!selected) { last_error = "SDK file has no trait declaration: " + files[i].first; return false; }
-		if (!allow_concrete) for (const auto &method : selected->trait_methods) {
-			if (!method.is_abstract) { last_error = "SDK trait contains a concrete method: " + text(method.name); return false; }
-		}
 		(i == 0 ? obligations : api) = *selected;
 	}
-	contract_paths = paths; contract_stamps = stamps; contract_allow_concrete = allow_concrete;
+	contract_paths = paths; contract_stamps = stamps;
 	cached_obligations = obligations; cached_api = api; cached_sources = sources;
 	contract_cached = true;
 	return true;
@@ -305,9 +300,13 @@ Node *SgdModLoader::load(const Dictionary &manifest, Object *api, Node *parent) 
 	Ref<SafeGDScript> script; script.instantiate();
 	if (!script->load_binary(bytes)) return fail(id, "Invalid mod ELF metadata");
 	script->set_mod_source_path(path);
+	// Concrete callbacks are opt-in for already compiled mods
+	const auto &functions = script->get_metadata().functions;
+	obligations.trait_methods.erase(std::remove_if(obligations.trait_methods.begin(), obligations.trait_methods.end(), [&](const auto &method) {
+		return !method.is_abstract && std::none_of(functions.begin(), functions.end(), [&](const auto &f) { return f.name == method.name; });
+	}), obligations.trait_methods.end());
 	const auto errors = gdscript::trait_conformance(script->get_metadata().functions, obligations);
 	if (!errors.empty()) return fail(id, "Mod '" + id + "' " + String(manifest.get("version", "0")) + ": " + text(errors.front()));
-	const auto &functions = script->get_metadata().functions;
 	auto init = std::find_if(functions.begin(), functions.end(), [](const auto &f) { return f.name == "mod_init" && !f.is_static && f.parameters.size() == 1; });
 	if (init == functions.end()) return fail(id, "Obligations must include mod_init(api)");
 	Dictionary limits, requested = manifest.get("limits", Dictionary());

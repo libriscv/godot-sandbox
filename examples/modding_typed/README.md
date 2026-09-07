@@ -1,13 +1,48 @@
-# Typed mods
+# Traits-based modding system
 
-`SgdModLoader` is available in both the native engine module and the BSD
-extension. This example is a SafeGDScript game with a typed API object and one
-mod. Install the upstream addon (including its compiler ELF for restricted
-compilation), or open the project with a module editor, and run it. The example
-prints `CHECK typed_export=true` and exits after loading, calling and unloading.
-The original [Dictionary/Callable example](../modding/MODDING.md) is unchanged.
+SafeGDScript supports traits, and with that Godot Sandbox has special support
+for traits-based modding APIs. The traits-based mod loader supplies mods with
+two separate threads which say something like: “Here is what your mod must do,
+and here is what it is allowed to ask the game to do.”
 
-## Contract and loading
+A trait contains typed functions, the inputs they accept, and the results they
+return. The compiler checks those agreements while the mod is being built, and
+then again before running it. In other words, a mod that doesn't implement
+required methods will fail compilation and be quarantined later by the loader.
+
+The previous Dictionary-based modding example could not use/expose fully typed
+functions by itself, nor would it fail compilation if any requirement was
+missing. Of course, it's a simpler approach and still works, but it's not a
+self-documenting API.
+
+Only `@abstract` functions in the trait are required to be implemented by mod
+authors:
+
+```gdscript
+trait_name ModBrain
+
+@abstract func mod_init(api: ArenaAPI) -> void
+@abstract func think(delta: float) -> Vector2
+
+func on_round_finished(won: bool) -> void:
+    pass
+```
+
+Here, both `mod_init` and `think` have to be implemented by the mod author or
+it will fail compilation. The API also has an `on_round_finished` that does
+nothing, and if a mod implements it, the mods function is the one that gets
+called (for each mod that implements it).
+
+On the game side it would be something like this:
+```gdscript
+if mod.has_method("on_round_finished"):
+    mod.call("on_round_finished", won)
+```
+
+The benefit is better tooling, clear contracts, and automatically derived
+API permissions.
+
+## API contract and loading
 
 `mods_sdk/mod_brain.sgd` declares what a mod must implement.
 `mods_sdk/arena_api.sgd` declares the modding API (to the game). A mod writes
@@ -27,7 +62,7 @@ for manifest in loader.scan():
         push_error(loader.get_last_error())
 ```
 
-Each mod gets a fresh script resource and restricted Sandbox. Limits, object
+Each mod gets a fresh script resource and a restricted Sandbox. Limits, object
 grants and the derived method policy are installed before initializers run.
 Only methods declared by the API trait on the exact granted API object are
 allowed. Type erasure does not bypass the runtime policy. Class, resource and
@@ -43,6 +78,25 @@ emitted deferred. `mod_failed(id, reason)` reports load errors. Compiler line
 and column are available through `get_error_line()` / `get_error_column()` in
 the module. `unload(id)` calls optional `mod_deinit()` unless quarantined.
 Unload explicitly when replacing a mod. The loader also owns final cleanup.
+
+## Older mods, newer APIs
+
+Older mods will not stop working against an expanded API, as long as the API
+does not add new `@abstract` functions. The game should be checking if a mod
+has a given method before calling for any concrete (non-abstract) function,
+which means it will simply be skipped for both older and newer mods that does
+not implement it.
+
+If the modding API needs to change in drastic ways, there are many ways to
+go about it, but a clean separation between older and newer can be handled at
+compile-time by adding new/different required abstract functions. Every game
+goes through this, and everyone does their best not to break old working
+things, but sometimes the game itself changes fundamentally underneath to
+support new big features for updates, and mods need to update as well.
+
+## Newer mods, older APIs
+
+
 
 ## Settings
 
@@ -62,7 +116,6 @@ All keys have the `sandbox/mods/` prefix.
 | `limits/coroutines_max` | 32 |
 | `restricted` | Module export: `mods/**`, comma-separated project-relative globs |
 | `runtime_compiler_template` | Module export: template to select for explicit source mode |
-| `allow_concrete_sdk_methods` | Module export: false. Opt in only when trait method bodies may be public |
 
 Manifest `[mod]` fields are `id`, `name`, `version`, `entry`, `order`, and
 `requires_api`. `[limits]` can only lower the project ceilings (zero clamps to
@@ -73,10 +126,26 @@ entries to 16 MiB. There is no dependency resolver. The game may supply a
 
 ## Release and SDK
 
+`SgdModLoader` is available in both the native engine module (GS+) and the BSD
+extension. This example is a SafeGDScript game with a typed API object and one
+mod. Install the upstream addon (including its compiler ELF for restricted
+compilation), or open the project with a module editor, and run it. The example
+prints `CHECK typed_export=true` and exits after loading, calling and unloading.
+
 The module exporter writes the text traits, a manifest template and generated
 method documentation into `mods_sdk/` beside the build. Public trait sources
 also remain in the PCK, with metadata-bearing ELF siblings for compiler-free
-validation. Concrete SDK methods fail export unless explicitly allowed.
+validation. SDK traits are public, including concrete method bodies. Abstract
+methods require implementations, while concrete methods provide defaults that
+mods may override.
+
+Older precompiled mods may omit concrete callbacks added by a newer SDK and
+still load. Check `mod.has_method("on_round_finished")` before calling an
+optional callback; if absent, keep the game's ordinary behavior. Recompiling
+supplies the current trait default unless the mod overrides it. The loader
+does not inject code into old ELFs or replace their compiled defaults.
+Missing abstract methods and incompatible signatures on present methods still
+fail loading. The game's API object must implement every offered method.
 Restricted mod globs compile with restricted semantics and bake into their own
 directory with checked memory. Normal game scripts keep the release policy.
 

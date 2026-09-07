@@ -28,7 +28,7 @@ class SgdModLoader : public Node {
 	int error_line = 0, error_column = 0;
 	bool busy = false;
 	bool suspended = false;
-	bool contract_cached = false, contract_allow_concrete = false;
+	bool contract_cached = false;
 	PackedStringArray contract_paths, cached_sources;
 	std::vector<uint64_t> contract_stamps;
 	gdscript::ClassSignature cached_obligations, cached_api;
