@@ -133,20 +133,9 @@ godot --headless --path . -s addons/godot_sandbox/run_sgd_tests.gd
 
 ### Modding and user-generated content
 
-A restricted sandbox denies all host access by default: methods, properties, classes and resource loading. Gamedevs decide what a mod can reach by passing an explicit API:
-
-```gdscript
-var api : Dictionary = {}
-
-func mod_init(granted : Dictionary) -> void:
-	api = granted
-	api["log"].call("hello from the mod")
-
-func _physics_process(delta):
-	api["report"].call("ticks", 1)
-```
-
 See [examples/modding](examples/modding) for a complete mod loader with a hostile-mod audit.
+
+For modding with traits, see [examples/modding_typed](examples/modding).
 
 ## C++ and Rust
 
@@ -175,13 +164,9 @@ In the modding example that implements a virtual CPU, we gained 5x over GDScript
 
 - Or, [create a Sandbox node and assign the ELF resource to it](https://libriscv.no/docs/host_langs/godot_integration/godot_intro/sandbox#creating-a-sandbox). One sandbox per node, with auto-completion from other GDScripts using @export
 
-## SafeGDScript and LLM assistance
+## Godot Sandbox Plus
 
-The SafeGDScript language has been created with LLM assistance. It can be turned off by building with the `ENABLE_SAFEGDSCRIPT` option disabled in CMake like so:
-
-```sh
-cmake -S . -B .build -DENABLE_SAFEGDSCRIPT=OFF
-```
+The commercial studio version of the addon is at https://plus.libriscv.no/. It has a custom backend for translating GDScript to highly efficient native machine code, supports obfuscation and includes modding support. Studios receive access to a Godot module in source form, which exports native machine code that is faster than idiomatic GDScript: https://plus.libriscv.no/demo/.
 
 ## Contributing
 
