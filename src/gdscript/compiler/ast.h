@@ -40,9 +40,6 @@ struct TypeExpr {
 		return names.size() == 1 ? names.front() : none;
 	}
 	std::string to_string() const {
-		if (spelled_nullable && names.size() == 1) {
-			return names.front() + "?";
-		}
 		std::string result;
 		for (const std::string& name : names) {
 			if (!result.empty()) result += " | ";
@@ -57,8 +54,11 @@ struct TypeExpr {
 			}
 		}
 		if (nullable) {
-			if (!result.empty()) result += " | ";
-			result += "null";
+			if (spelled_nullable && names.size() == 1) result += "?";
+			else {
+				if (!result.empty()) result += " | ";
+				result += "null";
+			}
 		}
 		return result;
 	}

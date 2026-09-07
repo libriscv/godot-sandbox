@@ -41,6 +41,28 @@ String entry_form(const String &entry) {
 const char *limit_names[] = { "execution_timeout", "memory_max", "allocations_max", "references_max", "coroutines_max" };
 const int64_t defaults[] = { 1, 32, 8000, 100, 32 };
 String text(const std::string &s) { return String::utf8(s.c_str()); }
+bool native_subtype(const std::string &actual, const std::string &required) {
+	return ClassDB::class_exists(text(actual)) && ClassDB::class_exists(text(required)) &&
+		ClassDB::is_parent_class(text(actual), text(required));
+}
+gdscript::DeclaredType reflected_type(const Dictionary &info) {
+	gdscript::DeclaredType result;
+	const int type = int64_t(info["type"]);
+	if (type == Variant::NIL && (int64_t(info.get("usage", 0)) & PROPERTY_USAGE_NIL_IS_VARIANT)) {
+		result.name = "Variant";
+		return result;
+	}
+	result.mask = uint64_t(1) << type;
+	String name = type == Variant::NIL ? String("void") : Variant::get_type_name(Variant::Type(type));
+	const String class_name = info.get("class_name", "");
+	if (type == Variant::OBJECT && !class_name.is_empty()) name = class_name;
+	const String hint = info.get("hint_string", "");
+	if (!hint.is_empty() && (type == Variant::ARRAY || type == Variant::DICTIONARY)) {
+		name += "[" + hint.replace(";", ", ") + "]";
+	}
+	result.name = name.utf8().get_data();
+	return result;
+}
 String identifier(const String &name) {
 	std::string result;
 	for (int i = 0; i < name.length(); ++i) {
@@ -245,7 +267,7 @@ Node *SgdModLoader::load(const Dictionary &manifest, Object *api, Node *parent) 
 	// signatures share Variant IDs; SafeGDScript retains nominal declarations.
 	Ref<SafeGDScript> api_script = api->get_script();
 	if (api_script.is_valid()) {
-		const auto errors = gdscript::trait_conformance(api_script->get_metadata().functions, offered);
+		const auto errors = gdscript::trait_conformance(api_script->get_metadata().functions, offered, native_subtype);
 		if (!errors.empty()) return fail(id, "API object: " + text(errors.front()));
 	} else {
 		std::vector<gdscript::FunctionSignature> functions;
@@ -254,15 +276,18 @@ Node *SgdModLoader::load(const Dictionary &manifest, Object *api, Node *parent) 
 		for (int i = 0; i < descriptions.size(); ++i) {
 			Dictionary method = descriptions[i];
 			gdscript::FunctionSignature sig;
+			sig.has_declaration = true;
 			sig.name = String(method["name"]).utf8().get_data();
 			sig.is_static = (int64_t(method.get("flags", 0)) & METHOD_FLAG_STATIC) != 0;
 			Dictionary ret = method["return"];
+			sig.declared_return = reflected_type(ret);
 			sig.return_type = int64_t(ret["type"]);
 			if (sig.return_type == 0 && (int64_t(ret.get("usage", 0)) & PROPERTY_USAGE_NIL_IS_VARIANT)) sig.return_type = -1;
 			Array arguments = method["args"];
 			for (int j = 0; j < arguments.size(); ++j) {
 				Dictionary arg = arguments[j];
 				gdscript::FunctionParameter parameter;
+				parameter.declared_type = reflected_type(arg);
 				parameter.name = String(arg["name"]).utf8().get_data();
 				parameter.type = int64_t(arg["type"]);
 				if (parameter.type == 0 && (int64_t(arg.get("usage", 0)) & PROPERTY_USAGE_NIL_IS_VARIANT)) parameter.type = -1;
@@ -270,7 +295,7 @@ Node *SgdModLoader::load(const Dictionary &manifest, Object *api, Node *parent) 
 			}
 			functions.push_back(sig);
 		}
-		const auto errors = gdscript::trait_conformance(functions, offered);
+		const auto errors = gdscript::trait_conformance(functions, offered, native_subtype);
 		if (!errors.empty()) return fail(id, "API object: " + text(errors.front()));
 	}
 	PackedByteArray bytes;
@@ -297,14 +322,22 @@ Node *SgdModLoader::load(const Dictionary &manifest, Object *api, Node *parent) 
 	Ref<SafeGDScript> script; script.instantiate();
 	if (!script->load_binary(bytes)) return fail(id, "Invalid mod ELF metadata");
 	script->set_mod_source_path(path);
+	// Validate what this ELF was compiled to call, not just the host's current
+	// API object. Additions and signature-compatible changes need no rebuild.
+	// Independently compiled, untyped mods may have no recorded API trait.
+	for (const auto &expected : script->get_metadata().classes) {
+		if (!expected.is_trait || expected.name != offered.name) continue;
+		const auto errors = gdscript::trait_conformance(offered.trait_methods, expected, native_subtype);
+		if (!errors.empty()) return fail(id, "Mod '" + id + "' requires an incompatible game API: " + text(errors.front()));
+	}
 	// Concrete callbacks are opt-in for already compiled mods
 	const auto &functions = script->get_metadata().functions;
-	const auto hook_errors = gdscript::required_host_hooks(functions, obligations);
+	const auto hook_errors = gdscript::required_host_hooks(functions, obligations, native_subtype);
 	if (!hook_errors.empty()) return fail(id, "Mod '" + id + "' is incompatible: " + text(hook_errors.front()));
 	obligations.trait_methods.erase(std::remove_if(obligations.trait_methods.begin(), obligations.trait_methods.end(), [&](const auto &method) {
 		return !method.is_abstract && std::none_of(functions.begin(), functions.end(), [&](const auto &f) { return f.name == method.name; });
 	}), obligations.trait_methods.end());
-	const auto errors = gdscript::trait_conformance(script->get_metadata().functions, obligations);
+	const auto errors = gdscript::trait_conformance(script->get_metadata().functions, obligations, native_subtype);
 	if (!errors.empty()) return fail(id, "Mod '" + id + "' " + String(manifest.get("version", "0")) + ": " + text(errors.front()));
 	auto init = std::find_if(functions.begin(), functions.end(), [](const auto &f) { return f.name == "mod_init" && !f.is_static && f.parameters.size() == 1; });
 	if (init == functions.end()) return fail(id, "Obligations must include mod_init(api)");

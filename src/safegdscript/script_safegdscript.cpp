@@ -2234,7 +2234,11 @@ Dictionary SafeGDScript::conforms_to(const Ref<SafeGDScript> &trait) const {
 	if (trait.is_valid()) for (const auto &c : trait->artifact_metadata.classes) {
 		if (!c.is_trait || c.name != trait->artifact_metadata.class_name) continue;
 		found = true;
-		for (const auto &error : gdscript::trait_conformance(artifact_metadata.functions, c)) errors.push_back(String::utf8(error.c_str()));
+		const auto native_subtype = [](const std::string &actual, const std::string &required) {
+			const StringName from = String::utf8(actual.c_str()), to = String::utf8(required.c_str());
+			return ClassDB::class_exists(from) && ClassDB::class_exists(to) && ClassDB::is_parent_class(from, to);
+		};
+		for (const auto &error : gdscript::trait_conformance(artifact_metadata.functions, c, native_subtype)) errors.push_back(String::utf8(error.c_str()));
 	}
 	if (!found) errors.push_back("Expected a compiled trait resource");
 	result["ok"] = errors.is_empty(); result["errors"] = errors;

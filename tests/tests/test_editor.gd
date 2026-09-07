@@ -184,7 +184,7 @@ func test_editor_public_tables_cover_the_compiler_globals():
 	var annotation_names := []
 	for entry in annotations:
 		annotation_names.push_back(String(entry.name))
-	assert_eq(annotations.size(), 35)
+	assert_eq(annotations.size(), 36)
 	assert_true(annotation_names.has("@export"))
 	assert_true(annotation_names.has("@onready"))
 	assert_true(annotation_names.has("@test"))

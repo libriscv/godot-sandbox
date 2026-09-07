@@ -75,7 +75,7 @@ static void test_parser_and_spelling() {
 	assert(program.globals[0].type_hint.nullable);
 	assert(program.globals[0].type_hint.spelled_nullable);
 	assert(program.globals[0].type_hint.to_string() == "Vector2?");
-	assert(program.globals[1].type_hint.to_string() == "Array?");
+	assert(program.globals[1].type_hint.to_string() == "Array[int]?");
 	assert(program.functions[0].parameters[0].type_hint.to_string() == "Node?");
 	assert(program.functions[0].return_type.to_string() == "Vector3?");
 	auto* returned = dynamic_cast<ReturnStmt*>(program.functions[1].body[0].get());

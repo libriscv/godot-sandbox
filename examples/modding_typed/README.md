@@ -8,8 +8,8 @@ and here is what it is allowed to ask the game to do.”
 A trait contains typed functions, the args they accept, and the results they
 return. The compiler checks those agreements while the mod is being built, and
 then again before running `mod_init`. In other words, a mod that doesn't
-implement required methods will fail compilation and be quarantined later by
-the loader.
+implement required methods will fail compilation. An independently compiled
+ELF with incompatible declarations is refused before its initializers run.
 
 The previous Dictionary-based modding example could not use/expose fully typed
 functions by itself, nor would it fail compilation if any requirement was
@@ -83,11 +83,22 @@ Unload explicitly when replacing a mod. The loader also owns final cleanup.
 
 ## Older mods, newer APIs
 
-Older mods will not stop working against an expanded API, as long as the API
-does not add new `@abstract` functions. The game should be checking if a mod
-has a given method before calling for any concrete (non-abstract) function,
-which means it will simply be skipped for both older and newer mods that does
-not implement it.
+Adding new methods to `ArenaAPI` will not stop older mods from working.
+Adding new required `@abstract` callbacks to `ModBrain` will refuses mods,
+new or old, that are missing those callbacks. The game should be checking
+if a mod has a given method before calling for any concrete (non-abstract)
+function, which means it will simply be skipped for both older and newer
+mods that does not implement it.
+
+The loader compares the API trait recorded in a mod's ELF with the current
+game's offered trait. Every recorded method must still exist with a compatible
+signature. The host may accept broader argument types and return narrower
+types; new methods, declaration order and parameter names do not cause a
+refusal. Typed Array and Dictionary element types must match. Native class
+compatibility follows Godot's inheritance hierarchy. This checks the whole
+recorded trait, including methods the mod never calls, without a version number
+or byte-for-byte SDK comparison. Untyped ELFs without a recorded API trait
+still get callback validation and runtime restrictions.
 
 If the modding API needs to change in drastic ways, there are many ways to
 go about it, but a clean separation between older and newer can be handled at
@@ -99,7 +110,9 @@ support new big features for updates, and mods need to update as well.
 ## Newer mods, older APIs
 
 If a mod tries to call an API function the game does not have, it will fail
-loudly at compile-time. This is inherent to traits.
+at compile time when built against that game's SDK. If it was compiled against
+a different SDK, the loader checks its recorded API requirements before any
+guest code runs.
 
 Separately, a mod can ask that the game should call a given function:
 

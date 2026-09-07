@@ -7612,7 +7612,8 @@ void CodeGenerator::validate_trait_member(const std::string& kind,
 			const auto signature = build_signature(required);
 			FunctionSignature implementation;
 			if (actual) implementation = build_signature(*actual);
-			const auto failure = validate_trait_signature(actual ? &implementation : nullptr, signature);
+			const auto failure = validate_trait_signature(actual ? &implementation : nullptr, signature,
+				[this](const auto &subtype, const auto &base) { return engine_class_derives_from(subtype, base); });
 			if (!failure.empty()) error_at(kind + " '" + name + "' uses '" + iface->name +
 				"' but '" + required.name + "' " + failure + " (" +
 				trait_method_signature(iface->name, signature) + ")", actual ? actual->line : std::max(1, line), actual ? actual->column : std::max(1, column));
