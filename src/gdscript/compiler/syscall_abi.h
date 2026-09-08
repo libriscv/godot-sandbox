@@ -11,10 +11,11 @@ struct SyscallABI {
 	uint8_t inputs;
 	uint8_t outputs;
 	bool counted;
+	bool floats = false;
 };
 
-// libriscv synchronizes fa0-fa7 inputs and fa0-fa1 outputs implicitly, for
-// both counted and legacy calls. Only integer counts are encoded. Handlers
+// FP calls synchronize fa0-fa7 inputs and fa0-fa1 outputs. Integer-only
+// counted calls clear bit 17 to skip guest FP register synchronization. Handlers
 // that inspect other CPU state or re-enter the VM still need the ordinary
 // system-call boundary. Dyncalls now synchronize instruction penalties when
 // the translation enables its instruction limit.
@@ -116,7 +117,7 @@ constexpr SyscallABI syscall_abi(unsigned number, int64_t operation = -1) {
 		case int(Utility_Op::RANDF):
 		case int(Utility_Op::RANDF_RANGE):
 		case int(Utility_Op::RANDFN):
-			return {1, 0, true}; // op in a0, doubles in fa0-fa7 -> fa0
+			return {1, 0, true, true}; // op in a0, doubles in fa0-fa7 -> fa0
 		default: return {4, 1, false}; // boxed operations can re-enter through Objects
 		}
 	case ECALL_BREAKPOINT: return {3, 0, false};
@@ -128,13 +129,18 @@ constexpr SyscallABI syscall_abi(unsigned number, int64_t operation = -1) {
 
 // Mirrors riscv::Dyncall without coupling the sandboxed compiler to the
 // host runtime headers. The codegen test checks this against the vendored ABI.
-constexpr uint32_t encode_counted_syscall(unsigned number, unsigned inputs, unsigned outputs) {
-	return (number << 20) | ((28u | outputs) << 15) | (7u << 12) |
+constexpr uint32_t encode_counted_syscall(unsigned number, unsigned inputs, unsigned outputs,
+		bool floats = true) {
+	return (number << 20) | ((24u | (floats ? 4u : 0u) | outputs) << 15) | (7u << 12) |
 		((16u | inputs) << 7) | 0x5b;
 }
 
 constexpr bool valid_counted_syscall(uint32_t word, int64_t operation = -1) {
 	const auto abi = syscall_abi(word >> 20, operation);
+	// Older counted ELFs synchronize FP even for integer-only handlers. Keep
+	// accepting them, but never let a floating-point handler opt out.
+	if (abi.floats && !(word & (1u << 17))) return false;
+	word |= 1u << 17;
 	return abi.counted && (word == encode_counted_syscall(word >> 20, abi.inputs, abi.outputs) ||
 		((word >> 20) == ECALL_DICTIONARY_OPS && word == encode_counted_syscall(ECALL_DICTIONARY_OPS, 5, 1)));
 }

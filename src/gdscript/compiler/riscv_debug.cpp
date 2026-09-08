@@ -85,8 +85,7 @@ void RISCVCodeGen::emit_breakpoint(int32_t line, bool installed, bool user_stop,
 	emit_li(REG_A0, line);
 	emit_li(REG_A1, user_stop ? 1 : 0);
 	emit_li(REG_A2, source_stop ? 1 : 0);
-	emit_li(REG_A7, ECALL_BREAKPOINT);
-	emit_ecall();
+	emit_syscall(ECALL_BREAKPOINT);
 
 	emit_ld(REG_A0, REG_SP, 0);
 	emit_ld(REG_A1, REG_SP, 8);

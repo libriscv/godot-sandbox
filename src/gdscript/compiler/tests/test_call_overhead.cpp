@@ -1,3 +1,4 @@
+#include "../syscall_abi.h"
 // Pin down the instruction sequences around a call: return, immediate folding,
 // int chaining, non-negative subscript elision, global handle elision.
 // Assertions are on emitted instruction shapes, not specific encodings.
@@ -119,7 +120,8 @@ bool is_store_through_return_pointer(uint32_t w) {
 }
 
 bool is_ecall(uint32_t w) {
-	return opcode_of(w) == 0x73 && funct3_of(w) == 0 && rd_of(w) == REG_ZERO && (w >> 20) == 0;
+	return gdscript::valid_counted_syscall_encoding(w) ||
+		(opcode_of(w) == 0x73 && funct3_of(w) == 0 && rd_of(w) == REG_ZERO && (w >> 20) == 0);
 }
 
 // `li a7, number` -- how a syscall says which one it is.
@@ -141,7 +143,8 @@ size_t count(const std::vector<uint32_t>& words, bool (*pred)(uint32_t)) {
 size_t count_syscall(const std::vector<uint32_t>& words, int number) {
 	size_t n = 0;
 	for (uint32_t w : words) {
-		if (selects_syscall(w, number)) {
+		if (selects_syscall(w, number) ||
+			(gdscript::valid_counted_syscall_encoding(w) && (w >> 20) == unsigned(number))) {
 			n++;
 		}
 	}

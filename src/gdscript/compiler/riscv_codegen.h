@@ -275,6 +275,8 @@ private:
 	void emit_bgeu(uint8_t rs1, uint8_t rs2, int32_t offset);
 	void emit_jal(uint8_t rd, int32_t offset);
 	void emit_jalr(uint8_t rd, uint8_t rs1, int32_t offset);
+	void emit_syscall(unsigned number, int64_t operation = -1);
+	void prepare_syscall();
 	void emit_ecall();
 	void emit_ret();
 

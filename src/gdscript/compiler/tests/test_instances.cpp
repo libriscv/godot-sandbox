@@ -1,3 +1,4 @@
+#include "dyncall_shim.h"
 #include "../compiler.h"
 #include "scope_stub.h"
 #include "../codegen.h"
@@ -348,6 +349,7 @@ void test_a_record_initializes_its_members() {
 } // namespace
 
 int main() {
+	sgd_install_test_dyncalls();
 	std::cout << "=== Instance record tests ===" << std::endl;
 	test_storage_classification();
 	test_initializers_are_split();

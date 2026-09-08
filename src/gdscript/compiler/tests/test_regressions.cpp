@@ -1,3 +1,4 @@
+#include "../syscall_abi.h"
 // Regression tests for compiler bugs that produced wrong code silently.
 //
 // Every test here pins down a behaviour that was previously wrong in a way that
@@ -636,8 +637,9 @@ static void test_truthiness_of_a_global_read_in_place() {
 	for (size_t off = 0; off + 4 <= code.size(); off += 4) {
 		const uint32_t instr = word_at(code, off);
 		// li a7, ECALL_VEVAL
-		if (!is_addi(instr) || rd_of(instr) != REG_A7 || rs1_of(instr) != 0 ||
-			(int32_t(instr) >> 20) != ECALL_VEVAL) {
+		if (!(gdscript::valid_counted_syscall_encoding(instr) && (instr >> 20) == ECALL_VEVAL) &&
+			(!is_addi(instr) || rd_of(instr) != REG_A7 || rs1_of(instr) != 0 ||
+			(int32_t(instr) >> 20) != ECALL_VEVAL)) {
 			continue;
 		}
 		// a1 is the operand pointer: the last write of it before the syscall.

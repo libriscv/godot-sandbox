@@ -1,3 +1,4 @@
+#include "dyncall_shim.h"
 // ECALL_BREAKPOINT on a real libriscv machine: placement, register
 // transparency, line-table/a0 agreement, and shadow-stack presence.
 #include "../compiler.h"
@@ -542,6 +543,7 @@ void test_a_typed_parameter_reads_back_after_assignment() {
 } // namespace
 
 int main() {
+	sgd_install_test_dyncalls();
 	test_nothing_emitted_without_breakpoints();
 	test_stops_on_the_line_it_was_given();
 	test_a_line_with_no_code_is_not_a_stop();

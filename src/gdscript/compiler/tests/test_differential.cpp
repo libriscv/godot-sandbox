@@ -1,3 +1,4 @@
+#include "dyncall_shim.h"
 // Differential testing: the IR interpreter against the real machine.
 //
 // The IR interpreter and the RISC-V backend are two independent
@@ -597,6 +598,7 @@ Outcome run_source(const std::string& source) {
 } // namespace
 
 int main(int argc, char** argv) {
+	sgd_install_test_dyncalls();
 	// Two modes. Without arguments it runs the shared corpus, which is what the
 	// test suite does. With --fuzz it runs generated programs instead, which is
 	// what turns this check into a fuzzer: the generator produces programs

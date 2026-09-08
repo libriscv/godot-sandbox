@@ -1,3 +1,4 @@
+#include "dyncall_shim.h"
 // AWAIT lowering tests: frame handoff, state dispatch, barrier correctness.
 // Runs compiled coroutines on libriscv against a minimal host stub.
 // Handle promotion covered by test_await_host_* in tests/test_basic.gd.
@@ -775,6 +776,7 @@ void test_the_frame_starts_out_nil() {
 } // namespace
 
 int main() {
+	sgd_install_test_dyncalls();
 	std::cout << "=== Await Tests ===" << std::endl << std::endl;
 
 	test_one_suspension();

@@ -1,3 +1,4 @@
+#include "dyncall_shim.h"
 // Deterministic code-quality guardrail for the interpreter hot path. Wall-clock
 // benchmarks are machine-dependent; the libriscv instruction counter is not.
 #include "../compiler.h"
@@ -142,6 +143,7 @@ void check_budget(const std::vector<uint8_t>& elf, const std::string& function,
 } // namespace
 
 int main() {
+	sgd_install_test_dyncalls();
 	Compiler compiler;
 	const std::vector<uint8_t> elf = compiler.compile(SOURCE);
 	if (elf.empty()) {
