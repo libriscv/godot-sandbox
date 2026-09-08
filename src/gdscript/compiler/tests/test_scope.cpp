@@ -1,3 +1,4 @@
+#include "../syscall_abi.h"
 #include "../lexer.h"
 #include "../parser.h"
 #include "../codegen.h"
@@ -229,7 +230,8 @@ static bool contains_word(const std::vector<uint8_t>& elf, uint32_t word) {
 	for (size_t i = 0; i + 4 <= elf.size(); i++) {
 		const uint32_t at = uint32_t(elf[i]) | (uint32_t(elf[i + 1]) << 8) |
 			(uint32_t(elf[i + 2]) << 16) | (uint32_t(elf[i + 3]) << 24);
-		if (at == word) {
+		if (at == word || ((word & 0xfffff) == ((17u << 7) | 0x13u) &&
+			gdscript::valid_counted_syscall_encoding(at) && (at >> 20) == (word >> 20))) {
 			return true;
 		}
 	}
@@ -241,7 +243,8 @@ static int count_word(const std::vector<uint8_t>& elf, uint32_t word) {
 	for (size_t i = 0; i + 4 <= elf.size(); i++) {
 		const uint32_t at = uint32_t(elf[i]) | (uint32_t(elf[i + 1]) << 8) |
 			(uint32_t(elf[i + 2]) << 16) | (uint32_t(elf[i + 3]) << 24);
-		if (at == word) {
+		if (at == word || ((word & 0xfffff) == ((17u << 7) | 0x13u) &&
+			gdscript::valid_counted_syscall_encoding(at) && (at >> 20) == (word >> 20))) {
 			count++;
 		}
 	}
@@ -566,7 +569,8 @@ static bool sets_a_saved_register(const std::vector<uint8_t>& elf, int syscall, 
 	for (size_t i = 0; i + 4 <= elf.size(); i++) {
 		const uint32_t word = uint32_t(elf[i]) | (uint32_t(elf[i + 1]) << 8) |
 			(uint32_t(elf[i + 2]) << 16) | (uint32_t(elf[i + 3]) << 24);
-		if (word != marker) {
+		if (word != marker && !(gdscript::valid_counted_syscall_encoding(word) &&
+			(word >> 20) == unsigned(syscall))) {
 			continue;
 		}
 		for (size_t k = 1; k <= window && i + 4 * (k + 1) <= elf.size(); k++) {

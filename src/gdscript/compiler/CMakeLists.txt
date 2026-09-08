@@ -193,6 +193,10 @@ if (BUILD_TESTING)
 	# the rest of the tests still build.
 	set(LIBRISCV_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../../ext/libriscv/lib)
 	if (NOT CMAKE_CROSSCOMPILING AND EXISTS ${LIBRISCV_DIR}/CMakeLists.txt)
+		add_gdscript_test(test_syscall_codegen tests/test_syscall_codegen.cpp)
+		target_compile_definitions(test_syscall_codegen PRIVATE
+			SGD_SYSCALL_SOURCE="${CMAKE_CURRENT_SOURCE_DIR}/tests/syscall_counts.gd")
+
 		if (NOT TARGET riscv)
 			set(RISCV_32I OFF CACHE BOOL "" FORCE)
 			set(RISCV_BINARY_TRANSLATION OFF CACHE BOOL "" FORCE)

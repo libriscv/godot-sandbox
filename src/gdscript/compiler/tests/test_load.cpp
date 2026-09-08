@@ -1,3 +1,4 @@
+#include "../syscall_abi.h"
 // LOAD_RESOURCE vs LOAD_RESOURCE_VAR lowering and DCE immunity.
 #include "../lexer.h"
 #include "../parser.h"
@@ -212,13 +213,13 @@ static void test_emitted_syscall() {
 
 	const std::vector<uint8_t> literal =
 		machine_code("func test():\n\treturn load(\"res://icon.svg\")\n");
-	assert(count_instruction(literal, li(REG_A7, ECALL_LOAD)) == 1);
+	assert(count_instruction(literal, gdscript::encode_counted_syscall(ECALL_LOAD, 3, 0, false)) == 1);
 	// A1 = length (characters).
 	assert(count_instruction(literal, li(REG_A1, 14)) == 1);
 	assert(count_instruction(literal, li(REG_A1, -1)) == 0);
 
 	const std::vector<uint8_t> computed = machine_code("func test(p):\n\treturn load(p)\n");
-	assert(count_instruction(computed, li(REG_A7, ECALL_LOAD)) == 1);
+	assert(count_instruction(computed, gdscript::encode_counted_syscall(ECALL_LOAD, 3, 0, false)) == 1);
 	// A1 = -1 (Variant path).
 	assert(count_instruction(computed, li(REG_A1, -1)) == 1);
 }

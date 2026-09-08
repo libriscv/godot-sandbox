@@ -1,3 +1,4 @@
+#include "dyncall_shim.h"
 // Runs profiled ELFs on a real libriscv machine and checks the accounting:
 // self excludes callees, total includes them, entry/exit balance across
 // recursion past MAX_DEPTH. INSTRUCTIONS clock throughout for determinism.
@@ -338,6 +339,7 @@ void test_recursion_overflows_the_shadow_stack() {
 } // namespace
 
 int main() {
+	sgd_install_test_dyncalls();
 	test_off_by_default();
 	test_header();
 	test_call_counts_and_nesting();

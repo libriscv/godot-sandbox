@@ -1,3 +1,4 @@
+#include "dyncall_shim.h"
 // Callables: lambdas, a function name used as a value, and calling a Callable
 // held in a variable.
 //
@@ -923,6 +924,7 @@ void test_lifted_names_stay_out_of_the_way() {
 } // namespace
 
 int main() {
+	sgd_install_test_dyncalls();
 	std::cout << "=== Callable Tests ===" << std::endl << std::endl;
 
 	test_a_lambda_is_a_callable();

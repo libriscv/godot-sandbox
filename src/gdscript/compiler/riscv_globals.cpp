@@ -483,8 +483,7 @@ void RISCVCodeGen::emit_global_syscall_form(const GlobalFunction& info, const st
 	}
 
 	emit_li(REG_A0, info.utility_op);
-	emit_li(REG_A7, ECALL_UTILITY);
-	emit_ecall();
+	emit_syscall(ECALL_UTILITY, info.utility_op);
 
 	emit_global_double_result(result_offset, REG_ABI_FA0, info.result);
 }
@@ -504,8 +503,7 @@ void RISCVCodeGen::emit_global_int_syscall_form(const GlobalFunction& info, cons
 	}
 
 	emit_li(REG_A0, info.utility_op);
-	emit_li(REG_A7, ECALL_UTILITY);
-	emit_ecall();
+	emit_syscall(ECALL_UTILITY, info.utility_op);
 
 	emit_global_int_result(result_offset, REG_A0, info.result);
 }
@@ -529,8 +527,7 @@ void RISCVCodeGen::emit_global_host_form(const GlobalFunction& info, const std::
 	emit_add_offset(REG_A1, REG_SP, result_offset + args_space); // where to write the answer
 	emit_mv(REG_A2, REG_SP);                                     // the arguments
 	emit_li(REG_A3, arg_count);
-	emit_li(REG_A7, ECALL_UTILITY);
-	emit_ecall();
+	emit_syscall(ECALL_UTILITY, info.utility_op);
 
 	emit_add_offset(REG_SP, REG_SP, args_space);
 }

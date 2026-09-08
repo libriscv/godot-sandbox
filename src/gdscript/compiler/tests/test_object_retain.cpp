@@ -1,3 +1,4 @@
+#include "../syscall_abi.h"
 #include "../codegen.h"
 #include "../ir_optimizer.h"
 #include "../ir_verifier.h"
@@ -65,7 +66,8 @@ int count_syscalls(const std::vector<uint8_t>& code, int syscall) {
 		uint32_t second = 0;
 		std::memcpy(&first, code.data() + i, 4);
 		std::memcpy(&second, code.data() + i + 4, 4);
-		count += (first == li_a7 && second == ecall) ? 1 : 0;
+		count += ((first == li_a7 && second == ecall) ||
+			(gdscript::valid_counted_syscall_encoding(first) && (first >> 20) == unsigned(syscall))) ? 1 : 0;
 	}
 	return count;
 }

@@ -1,3 +1,4 @@
+#include "dyncall_shim.h"
 // DebugLayout shadow stack on a real libriscv machine. Outer frame lines
 // resolved from return addresses via the line table; nothing per statement.
 #include "../compiler.h"
@@ -345,6 +346,7 @@ void test_overflow_keeps_counting() {
 } // namespace
 
 int main() {
+	sgd_install_test_dyncalls();
 	test_off_by_default();
 	test_header();
 	test_call_stack_mid_call();

@@ -1,3 +1,4 @@
+#include "../syscall_abi.h"
 // What a function's prologue and epilogue actually cost.
 //
 // Every function used to open with the same six instructions -- move sp, save
@@ -108,7 +109,8 @@ bool is_store_through_return_pointer(uint32_t w) {
 }
 
 bool is_ecall(uint32_t w) {
-	return opcode_of(w) == 0x73 && funct3_of(w) == 0 && rd_of(w) == REG_ZERO && (w >> 20) == 0;
+	return gdscript::valid_counted_syscall_encoding(w) ||
+		(opcode_of(w) == 0x73 && funct3_of(w) == 0 && rd_of(w) == REG_ZERO && (w >> 20) == 0);
 }
 
 // jal ra, offset -- a call to another function in the program.
