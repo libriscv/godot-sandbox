@@ -1,3 +1,4 @@
+#include "gdscript/compiler/syscall_abi.h"
 #include "guest_datatypes.h"
 #include "gdscript/compiler/call_abi.h"
 #include "syscalls.h"
@@ -3523,7 +3524,6 @@ APICALL(api_dict_ops) {
 			return;
 		}
 		case Dictionary_Op::GET_SIZE:
-			PENALIZE(10'000);
 			machine.set_result(dict.size());
 			return;
 		case Dictionary_Op::ERASE: {
@@ -4267,6 +4267,22 @@ void Sandbox::initialize_syscalls_runtime() {
 	};
 }
 
+namespace {
+template <int64_t Operation>
+const riscv::Instruction<RISCV_ARCH> &counted_operation(
+		riscv::instruction_printer<RISCV_ARCH> printer) {
+	static const riscv::Instruction<RISCV_ARCH> instruction{
+		[](riscv::CPU<RISCV_ARCH> &cpu, riscv::rv32i_instruction instr) {
+			if (int64_t(cpu.reg(riscv::REG_ARG0)) != Operation)
+				cpu.trigger_exception(riscv::UNIMPLEMENTED_INSTRUCTION, instr.whole);
+			machine_t::syscall_handlers[instr.Itype.imm](cpu.machine());
+		}, printer
+	};
+	return instruction;
+}
+
+} // namespace
+
 void Sandbox::initialize_syscalls() {
 	using namespace riscv;
 
@@ -4356,23 +4372,47 @@ void Sandbox::initialize_syscalls() {
 	Sandbox::initialize_syscalls_3d();
 
 	using namespace riscv;
-	static const Instruction<RISCV_ARCH> validated_syscall_instruction {
-		[](CPU<RISCV_ARCH>& cpu, rv32i_instruction instr) {
+	static const Instruction<RISCV_ARCH> validated_syscall_instruction{
+		[](CPU<RISCV_ARCH> &cpu, rv32i_instruction instr) {
 			Machine<RISCV_ARCH>::syscall_handlers[instr.Itype.imm](cpu.machine());
 		},
-		[](char* buffer, size_t len, const CPU<RISCV_ARCH>&, rv32i_instruction instr) -> int {
-			return snprintf(buffer, len,
-				"DYNCALL: 4-byte idx=0x%X (inline, 0x%X)",
-				uint32_t(instr.Itype.imm),
-				instr.whole
-			);
-		}};
+		[](char *buffer, size_t len, const CPU<RISCV_ARCH> &,
+				rv32i_instruction instr) -> int {
+			return snprintf(buffer, len, "DYNCALL: 4-byte idx=0x%X (inline, 0x%X)",
+					uint32_t(instr.Itype.imm), instr.whole);
+		}
+	};
 	// Override the machines unimplemented instruction handling,
 	// in order to use the custom instruction instead.
-	CPU<RISCV_ARCH>::on_unimplemented_instruction
-		= [](rv32i_instruction instr) -> const Instruction<RISCV_ARCH>& {
-		if (instr.opcode() == 0b1011011 && instr.Itype.rs1 == 0 && instr.Itype.rd == 0) {
+	CPU<RISCV_ARCH>::on_unimplemented_instruction =
+			[](rv32i_instruction instr) -> const Instruction<RISCV_ARCH> & {
+		const bool legacy = instr.opcode() == 0b1011011 && instr.Itype.funct3 == 0 &&
+				instr.Itype.rs1 == 0 && instr.Itype.rd == 0;
+		if (legacy || gdscript::valid_counted_syscall_encoding(instr.whole)) {
 			if (instr.Itype.imm < Machine<RISCV_ARCH>::syscall_handlers.size()) {
+				// Fixed signatures are completely validated at decode time. Only
+				// operation-dependent counts need a runtime comparison of a0.
+				if (!legacy) {
+					const auto printer = validated_syscall_instruction.printer;
+					switch (instr.Itype.imm) {
+					case ECALL_VSCOPE:
+						return counted_operation<int64_t(Scope_Op::MARK)>(printer);
+					case ECALL_DICTIONARY_OPS:
+						if (instr.Itype.rd == (16 | 2))
+							return counted_operation<int64_t(Dictionary_Op::GET_SIZE)>(printer);
+						break; // The general 5/1 form covers every operation.
+					case ECALL_UTILITY: {
+						static const Instruction<RISCV_ARCH> utility_instruction{
+							[](CPU<RISCV_ARCH> &cpu, rv32i_instruction word) {
+								if (!gdscript::valid_counted_syscall(word.whole, int64_t(cpu.reg(REG_ARG0))))
+									cpu.trigger_exception(UNIMPLEMENTED_INSTRUCTION, word.whole);
+								api_utility(cpu.machine());
+							}, printer
+						};
+						return utility_instruction;
+					}
+					}
+				}
 				return validated_syscall_instruction;
 			}
 		}
