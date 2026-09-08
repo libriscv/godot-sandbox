@@ -182,6 +182,7 @@ public:
 	const std::vector<gdscript::FunctionSignature> &get_signatures() const { return signatures; }
 	// Addresses are the loaded ELF's. Present in every build: it costs no code.
 	const gdscript::LineTable &get_line_table() const { return line_table; }
+	const std::vector<gdscript::SourceDeclaration> &get_declarations() const { return declarations; }
 	String get_compile_error() const;
 	static PackedStringArray resolve_base_sources(const String &p_source,
 			const String &p_self_path = String(), String *r_error = nullptr);

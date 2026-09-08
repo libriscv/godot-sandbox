@@ -1,5 +1,6 @@
 #include "syntax_highlighter_safegdscript.h"
 #include "script_language_safegdscript.h"
+#include "script_safegdscript.h"
 
 #include <godot_cpp/classes/class_db_singleton.hpp>
 #include <godot_cpp/classes/editor_interface.hpp>
@@ -8,6 +9,7 @@
 #include <godot_cpp/classes/project_settings.hpp>
 #include <godot_cpp/classes/script.hpp>
 #include <godot_cpp/classes/text_edit.hpp>
+#include <godot_cpp/core/class_db.hpp>
 
 #include <algorithm>
 
@@ -190,6 +192,72 @@ void SafeGDScriptHighlightRules::update(TextEdit *p_text_edit, const Ref<Script>
 		}
 		for (const String &constant : class_db->class_get_integer_constant_list(instance_base)) {
 			member_keywords[std::string(constant.utf8().get_data())] = member_variable_color;
+		}
+		for (const Dictionary &entry : class_db->class_get_signal_list(instance_base)) {
+			const String name = entry.get("name", String());
+			member_keywords[std::string(name.utf8().get_data())] = member_variable_color;
+		}
+		for (const Dictionary &entry : class_db->class_get_method_list(instance_base)) {
+			const String name = entry.get("name", String());
+			member_keywords[std::string(name.utf8().get_data())] = member_variable_color;
+		}
+		for (const String &enumeration : class_db->class_get_enum_list(instance_base)) {
+			member_keywords[std::string(enumeration.utf8().get_data())] = base_type_color;
+		}
+	}
+
+	int depth = 0;
+	for (Ref<Script> at = p_edited; at.is_valid() && depth < 64; at = at->get_base_script(), depth++) {
+		for (const Dictionary &entry : at->get_script_property_list()) {
+			const int64_t usage = entry.get("usage", 0);
+			if (usage & (PROPERTY_USAGE_CATEGORY | PROPERTY_USAGE_GROUP | PROPERTY_USAGE_SUBGROUP)) {
+				continue;
+			}
+			const String name = entry.get("name", String());
+			if (!name.contains("/")) {
+				member_keywords[std::string(name.utf8().get_data())] = member_variable_color;
+			}
+		}
+		for (const Dictionary &entry : at->get_script_signal_list()) {
+			const String name = entry.get("name", String());
+			member_keywords[std::string(name.utf8().get_data())] = member_variable_color;
+		}
+		for (const Dictionary &entry : at->get_script_method_list()) {
+			const String name = entry.get("name", String());
+			member_keywords[std::string(name.utf8().get_data())] = member_variable_color;
+		}
+		for (const Variant &key : at->get_script_constant_map().keys()) {
+			member_keywords[std::string(String(key).utf8().get_data())] = member_variable_color;
+		}
+		const SafeGDScript *script = Object::cast_to<SafeGDScript>(at.ptr());
+		if (script == nullptr) {
+			continue;
+		}
+		const std::vector<gdscript::SourceDeclaration> &declarations = script->get_declarations();
+		for (const gdscript::SourceDeclaration &declaration : declarations) {
+			if (declaration.name.empty()) {
+				continue;
+			}
+			bool file_scope = declaration.parent < 0;
+			if (!file_scope && size_t(declaration.parent) < declarations.size()) {
+				const gdscript::SourceDeclaration &parent = declarations[size_t(declaration.parent)];
+				file_scope = parent.kind == gdscript::DeclarationKind::ENUM && parent.parent < 0;
+			}
+			if (!file_scope) {
+				continue;
+			}
+			switch (declaration.kind) {
+				case gdscript::DeclarationKind::VARIABLE:
+				case gdscript::DeclarationKind::CONSTANT:
+				case gdscript::DeclarationKind::SIGNAL:
+				case gdscript::DeclarationKind::FUNCTION:
+				case gdscript::DeclarationKind::ENUM:
+				case gdscript::DeclarationKind::ENUM_VALUE:
+					member_keywords[declaration.name] = member_variable_color;
+					break;
+				default:
+					break;
+			}
 		}
 	}
 
@@ -422,8 +490,21 @@ void SafeGDScriptCodeHighlighter::_clear_highlighting_cache() {
 	rules.clear();
 }
 
+void SafeGDScriptCodeHighlighter::_bind_methods() {
+	ClassDB::bind_method(D_METHOD("set_edited_script", "script"), &SafeGDScriptCodeHighlighter::set_edited_script);
+	ClassDB::bind_method(D_METHOD("get_edited_script"), &SafeGDScriptCodeHighlighter::get_edited_script);
+	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "edited_script", PROPERTY_HINT_RESOURCE_TYPE, "Script"),
+			"set_edited_script", "get_edited_script");
+}
+
+void SafeGDScriptCodeHighlighter::set_edited_script(const Ref<Script> &p_script) {
+	edited = p_script;
+	clear_highlighting_cache();
+	update_cache();
+}
+
 void SafeGDScriptCodeHighlighter::_update_cache() {
-	rules.update(get_text_edit(), Ref<Script>());
+	rules.update(get_text_edit(), edited);
 }
 
 PackedStringArray SafeGDScriptSyntaxHighlighter::_get_supported_languages() const {

@@ -57,3 +57,46 @@ func test_a_node_path_is_coloured_as_one_token():
 	var line: Dictionary = _lines()[4]
 	assert_eq(_color_at(line, text.find("$")), _color_at(line, text.find("Player")))
 	assert_ne(_color_at(line, text.find("$")), _color_at(line, text.find("target")))
+
+const MEMBER_SOURCE := """extends Node
+signal hit
+const LIMIT := 3
+enum Phase { START, END }
+var speed := 10
+func run() -> int:
+	return speed + LIMIT + Phase.START
+"""
+
+func _member_lines(script: Script) -> Array[Dictionary]:
+	var highlighter := SafeGDScriptCodeHighlighter.new()
+	highlighter.set_edited_script(script)
+	var edit := CodeEdit.new()
+	edit.text = MEMBER_SOURCE
+	edit.syntax_highlighter = highlighter
+	var lines: Array[Dictionary] = []
+	for line in edit.get_line_count():
+		lines.push_back(highlighter.get_line_syntax_highlighting(line))
+	edit.syntax_highlighter = null
+	edit.free()
+	return lines
+
+func test_the_scripts_own_members_differ_from_plain_text():
+	var script := SafeGDScript.new()
+	script.set_source_code(MEMBER_SOURCE)
+	assert_eq(script.get_compile_error(), "")
+	var text := MEMBER_SOURCE.get_slice("\n", 6)
+	var plain: Dictionary = _member_lines(null)[6]
+	var known: Dictionary = _member_lines(script)[6]
+	assert_ne(_color_at(known, text.find("speed")), _color_at(plain, text.find("speed")))
+	assert_eq(_color_at(known, text.find("speed")), _color_at(known, text.find("LIMIT")))
+	assert_eq(_color_at(known, text.find("speed")), _color_at(known, text.find("START")))
+
+func test_a_member_is_coloured_wherever_it_is_declared():
+	var script := SafeGDScript.new()
+	script.set_source_code(MEMBER_SOURCE)
+	assert_eq(script.get_compile_error(), "")
+	var lines := _member_lines(script)
+	var body := MEMBER_SOURCE.get_slice("\n", 6)
+	var member := _color_at(lines[6], body.find("speed"))
+	assert_eq(_color_at(lines[1], MEMBER_SOURCE.get_slice("\n", 1).find("hit")), member)
+	assert_eq(_color_at(lines[4], MEMBER_SOURCE.get_slice("\n", 4).find("speed")), member)

@@ -53,11 +53,15 @@ class SafeGDScriptCodeHighlighter : public SyntaxHighlighter {
 	GDCLASS(SafeGDScriptCodeHighlighter, SyntaxHighlighter);
 
 	mutable SafeGDScriptHighlightRules rules;
+	Ref<Script> edited;
 
 protected:
-	static void _bind_methods() {}
+	static void _bind_methods();
 
 public:
+	void set_edited_script(const Ref<Script> &p_script);
+	Ref<Script> get_edited_script() const { return edited; }
+
 	virtual Dictionary _get_line_syntax_highlighting(int32_t p_line) const override;
 	virtual void _clear_highlighting_cache() override;
 	virtual void _update_cache() override;
