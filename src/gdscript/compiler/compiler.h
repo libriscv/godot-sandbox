@@ -7,7 +7,6 @@
 #include "line_table.h"
 #include "profiling_layout.h"
 #include "variant_layout.h"
-#include "ir.h"
 #include <optional>
 #include <string>
 #include <utility>
@@ -15,6 +14,8 @@
 #include <cstdint>
 
 namespace gdscript {
+
+struct IRProgram;
 
 struct CompilerOptions {
 	enum class StructChecks : uint8_t {
@@ -85,7 +86,7 @@ public:
 	Compiler();
 
 	// Full frontend pipeline, including traits, inheritance, metadata and optimization.
-	// No machine code is emitted; output_elf and target emission options are ignored.
+	// No machine code is emitted. output_elf and target emission options are ignored.
 	// Link gdscript_frontend alone when supplying another backend. nullopt is failure;
 	// a valid program may have no functions. Diagnostics use the existing getters.
 	std::optional<IRProgram> compile_to_ir(const std::string& source, const CompilerOptions& options = {});
