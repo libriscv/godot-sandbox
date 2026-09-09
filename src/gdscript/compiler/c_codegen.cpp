@@ -98,6 +98,7 @@ struct Emitter {
     std::unordered_map<std::string, size_t> functions;
     std::vector<int> scalars;
     std::vector<bool> boxes;
+    bool debug = false;
     int scalar(const std::string &r) const {
         return r.size() > 1 && r[0] == 'r' && r[1] >= '0' && r[1] <= '9' ? scalars.at(std::stoi(r.substr(1))) : -1;
     }
@@ -288,6 +289,7 @@ struct Emitter {
     }
     void function(const IRFunction &f, size_t index) {
         scalars = scalar_locals(f);
+        if (debug) std::fill(scalars.begin(), scalars.end(), -1);
         boxes.assign(scalars.size(),false);
         std::vector<bool> used(scalars.size(), false);
         std::vector<int> reads(scalars.size(), 0), writes(scalars.size(), 0);
@@ -299,12 +301,20 @@ struct Emitter {
                 if (ir_writes_operand(i, j)) ++writes[i.operands[j].reg_index()];
         }
         used[0] = true;
+        if (debug) std::fill(used.begin(), used.end(), true);
         for (const auto &i : f.instructions)
             for (const auto &v : i.operands)
                 if (v.type == IRValue::Type::REGISTER) used[v.reg_index()] = true;
         auto prefix = std::move(out);
         out = std::ostringstream();
         const int registers = std::max(1, f.max_registers);
+        if (debug) {
+            out << "  const GJVariant *debug_locals[" << registers << "] = {";
+            for (int j = 0; j < registers; ++j) out << (j ? "," : "") << "&r" << j;
+            out << "};\n  GJDebugFrame debug_frame = {" << index << ",0,0,debug_locals," << registers << ","
+                << (!f.parameters.empty() && f.parameters.front() == "self" ? "count > 0 ? args[0] : ctx->self" : "ctx->self") << "};\n"
+                << "  if (ctx->debug) ctx->debug(ctx,&debug_frame,GJ_DEBUG_ENTER);\n";
+        }
         out << "  GJVariant temp = {0};\n";
         out << "  if (count != " << f.parameters.size() << ") {"; fail("Wrong argument count for " + f.name); out << "  }\n";
         // Unreferenced parameters need no local ownership (notably unused
@@ -312,10 +322,18 @@ struct Emitter {
         for (size_t j = 0; j < f.parameters.size(); ++j)
             if (used[j]) { require_box("&r" + std::to_string(j)); out << "  gj_move(&r" << j << ",args[" << j << "]);\n"; }
         for (size_t at = 0; at < f.instructions.size(); ++at) {
-            if (array_step(f, at, reads, writes)) { at += 3; continue; }
+            if (!debug && array_step(f, at, reads, writes)) { at += 3; continue; }
             const auto &i = f.instructions[at];
             const auto &a = i.operands;
             out << "  /* " << ir_opcode_name(i.opcode) << " line " << i.line << " */\n";
+            // Place line hooks after labels so loop backedges visit them too.
+            if (debug && i.opcode != IROpcode::LABEL) {
+                out << "  debug_frame.instruction = " << at << ";\n";
+                if (i.line > 0) out << "  debug_frame.line = " << i.line << ";\n";
+                if (i.line > 0)
+                    out << "  if (ctx->debug) ctx->debug(ctx,&debug_frame,"
+                        << (i.opcode == IROpcode::BREAKPOINT ? "GJ_DEBUG_BREAKPOINT" : "GJ_DEBUG_LINE") << ");\n";
+            }
             auto reg = [&](size_t j) { auto address = "&" + r(a[j]); require_box(address); return address; };
             switch (i.opcode) {
             case IROpcode::LOAD_IMM: set(r(a[0]),2,integer(a[1].immediate())); break;
@@ -348,7 +366,7 @@ struct Emitter {
             case IROpcode::TYPE_TEST: reg(1); out << "  gj_bool(" << reg(0) << ',' << r(a[1]) << ".type == " << a[2].immediate() << ");\n"; break;
             case IROpcode::TYPE_TEST_MASK: reg(1); out << "  gj_bool(" << reg(0) << ",(" << integer(a[2].immediate()) << " & (1ULL << " << r(a[1]) << ".type)) != 0);\n"; break;
             case IROpcode::SCOPE_MARK: case IROpcode::SCOPE_RELEASE: break;
-            case IROpcode::BREAKPOINT: break; // No native debugger instrumentation yet.
+            case IROpcode::BREAKPOINT: break; // Handled by the debug hook above.
             case IROpcode::ADD: arithmetic(i, 6, "+"); break;
             case IROpcode::SUB: arithmetic(i, 7, "-"); break;
             case IROpcode::MUL: arithmetic(i, 8, "*"); break;
@@ -514,6 +532,7 @@ struct Emitter {
             }
         }
         out << "cleanup:\n";
+        if (debug) out << "  if (ctx->debug) ctx->debug(ctx,&debug_frame,GJ_DEBUG_EXIT);\n";
         box("&r0");
         out << "  if (!ctx->failed) gj_move(result,&r0);\n";
         for (int j = 0; j < registers; ++j) if (used[j] && scalars[j] < 0) { boxes[j] = true; out << "  gj_clear(&r" << j << ");\n"; }
@@ -569,8 +588,10 @@ struct Emitter {
     }
 };
 }
-std::string CCodeGenerator::generate(const IRProgram &program) {
+std::string CCodeGenerator::generate(const IRProgram &program, bool debug_info) {
     ir_verify(program);
+    // Keep named registers and lexical live ranges intact for inspection.
+    if (debug_info) return Emitter{program, {}, {}, {}, {}, true}.generate();
     auto optimized = program;
     IROptimizer copies;
     // Use only native-safe local copy propagation, not sandbox ownership,

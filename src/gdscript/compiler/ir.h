@@ -311,6 +311,7 @@ struct IRFunction {
 	};
 
 	std::string name;
+	std::string source_path; // Declaring file, including inherited functions.
 	std::vector<std::string> parameters;
 	std::vector<IRInstruction> instructions;
 	std::vector<DebugLocal> debug_locals;

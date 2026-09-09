@@ -9,6 +9,6 @@ namespace gdscript {
 // Throws a diagnostic for features requiring ScriptLanguage integration.
 class CCodeGenerator {
 public:
-    std::string generate(const IRProgram &program);
+    std::string generate(const IRProgram &program, bool debug_info = false);
 };
 }

@@ -797,6 +797,8 @@ IRProgram CodeGenerator::generate(const Program& program) {
 		m_current_chain_function = pending.chain_function;
 		m_in_static_function = pending.in_static_function;
 		IRFunction lifted = generate_lambda_function(*pending.decl, pending.captures);
+		lifted.source_path = size_t(pending.chain_link) < m_chain.paths.size()
+			? m_chain.paths[size_t(pending.chain_link)] : m_source_path;
 		m_in_static_function = false;
 		m_current_class = nullptr;
 		m_current_chain_link = 0;
@@ -819,6 +821,8 @@ IRProgram CodeGenerator::generate(const Program& program) {
 IRFunction CodeGenerator::generate_function(const FunctionDecl& decl, const StructDecl* owner) {
 	FunctionContext func;
 	func.ir.name = owner != nullptr ? lifted_method_name(*owner, decl.name) : decl.name;
+	func.ir.source_path = size_t(decl.chain_link) < m_chain.paths.size()
+		? m_chain.paths[size_t(decl.chain_link)] : m_source_path;
 	func.ir.is_coroutine = decl.is_coroutine;
 	const TypeSet return_set = type_set_from(decl.return_type, decl.line, decl.column);
 	func.ir.return_type_hint = decl.return_type.is_union()

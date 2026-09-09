@@ -29,6 +29,19 @@ typedef struct GJVariant {
     } data;
 } GJVariant;
 
+/* Stack-owned debug views, valid until the matching EXIT event. */
+typedef struct GJDebugFrame {
+    int function;
+    int line;
+    int instruction;
+    const GJVariant *const *locals;
+    int local_count;
+    const GJVariant *self;
+} GJDebugFrame;
+enum GJDebugEvent { GJ_DEBUG_ENTER, GJ_DEBUG_EXIT, GJ_DEBUG_LINE, GJ_DEBUG_BREAKPOINT, GJ_DEBUG_ERROR };
+struct GJContext;
+typedef void (*GJDebugHook)(struct GJContext *, GJDebugFrame *, int event);
+
 typedef struct GJContext {
     GJVariant *globals;
     GJVariant *self;
@@ -36,6 +49,7 @@ typedef struct GJContext {
     int failed;
     GJVariant *shared_globals; /* optional; null preserves standalone storage */
     void *runtime; /* native ScriptInstance/Callable bridge */
+    GJDebugHook debug; /* optional; absent in non-debug generated code */
 } GJContext;
 
 enum GJOperation {

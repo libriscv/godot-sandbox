@@ -382,7 +382,8 @@ std::optional<std::string> Compiler::compile_to_c(const std::string &source, Com
     options.batch_iteration = false;
     auto program = compile_to_ir(source, options);
     if (!program) return std::nullopt;
-    try { return CCodeGenerator().generate(*program); }
+    try { return CCodeGenerator().generate(*program,
+        options.debug_info || options.debug_step_points || !options.breakpoint_lines.empty()); }
     catch (const std::exception &error) { set_error(error); return std::nullopt; }
 }
 }
