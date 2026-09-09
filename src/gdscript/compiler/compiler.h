@@ -7,6 +7,8 @@
 #include "line_table.h"
 #include "profiling_layout.h"
 #include "variant_layout.h"
+#include "ir.h"
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -26,6 +28,10 @@ struct CompilerOptions {
 	bool output_elf = true;
 	// Off for optimization-invariance reference answers.
 	bool optimize = true;
+	// Sandbox batching uses scoped handles. Native backends use direct iteration.
+	bool batch_iteration = true;
+	// Native ScriptInstances represent nested classes as Objects.
+	bool native_classes = false;
 	std::string output_path;
 	bool double_precision = native_variant_layout().double_precision;
 	// Compile-time switch; off emits no instrumentation at all.
@@ -78,6 +84,16 @@ class Compiler {
 public:
 	Compiler();
 
+	// Full frontend pipeline, including traits, inheritance, metadata and optimization.
+	// No machine code is emitted; output_elf and target emission options are ignored.
+	// Link gdscript_frontend alone when supplying another backend. nullopt is failure;
+	// a valid program may have no functions. Diagnostics use the existing getters.
+	std::optional<IRProgram> compile_to_ir(const std::string& source, const CompilerOptions& options = {});
+
+	// Native C99 backend. Defaults to unoptimized IR and direct iteration.
+	std::optional<std::string> compile_to_c(const std::string& source, CompilerOptions options = {});
+
+	// RISC-V compatibility API, supplied by the gdscript_compiler target.
 	std::vector<uint8_t> compile(const std::string& source, const CompilerOptions& options = {});
 	bool compile_to_file(const std::string& source, const std::string& output_path, const CompilerOptions& options = {});
 	std::string get_error() const { return m_error; }
@@ -105,6 +121,8 @@ public:
 	const std::vector<uint32_t> &get_installed_breakpoints() const { return m_installed_breakpoints; }
 
 private:
+	void set_error(const std::string& source, const CompilerException& error);
+	void set_error(const std::exception& error);
 	std::string m_error;
 	CompilerError m_error_info;
 	std::vector<ParseDiagnostic> m_warnings;

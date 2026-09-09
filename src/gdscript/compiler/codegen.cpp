@@ -779,7 +779,15 @@ IRProgram CodeGenerator::generate(const Program& program) {
 		const PendingLambda pending = m_pending_lambdas[i];
 		m_current_function = pending.lifted_name;
 
-		FunctionSignature signature;
+		// Keep the sandbox ABI unchanged; native Callables complete defaults at the host boundary.
+		FunctionSignature signature = m_native_classes ? build_signature(*pending.decl) : FunctionSignature();
+		if (m_native_classes && !pending.captures.empty()) {
+			FunctionParameter captures;
+			captures.name = "@captures";
+			captures.type = Variant::ARRAY;
+			signature.parameters.insert(signature.parameters.begin(), std::move(captures));
+			++signature.required_arguments;
+		}
 		signature.name = pending.lifted_name;
 		signature.line = pending.decl->line;
 		ir_program.signatures.push_back(std::move(signature));
@@ -2998,7 +3006,7 @@ void CodeGenerator::gen_for(const ForStmt* stmt, FunctionContext& func) {
 			func.ir.instructions.emplace_back(IROpcode::MOVE, IRValue::reg(snapshot_reg),
 				IRValue::reg(array_reg));
 			set_register_type(func, snapshot_reg, Variant::STRING);
-			if (!func.ir.is_coroutine) {
+			if (m_batch_iteration && !func.ir.is_coroutine) {
 				gen_string_walk(stmt, snapshot_reg, func);
 				return;
 			}
@@ -3006,7 +3014,7 @@ void CodeGenerator::gen_for(const ForStmt* stmt, FunctionContext& func) {
 			// at a time; the index and String are frame slots, so they restore.
 			array_reg = snapshot_reg;
 		}
-		if (get_register_type(func, array_reg) == Variant::ARRAY) {
+		if (m_batch_iteration && get_register_type(func, array_reg) == Variant::ARRAY) {
 			gen_array_walk(stmt, array_reg, func, iterable_element, iterable_trait);
 			return;
 		}
@@ -5570,8 +5578,10 @@ int CodeGenerator::gen_instance_class_test(int value_reg, const std::string& cla
 	const std::string end_label = make_label("is_instance_end");
 	if (known != Variant::DICTIONARY) {
 		int is_dict_reg = alloc_register(func);
-		func.ir.instructions.emplace_back(IROpcode::TYPE_TEST, IRValue::reg(is_dict_reg),
-			IRValue::reg(value_reg), IRValue::imm(static_cast<int64_t>(Variant::DICTIONARY)));
+		func.ir.instructions.emplace_back(m_native_classes ? IROpcode::TYPE_TEST_MASK : IROpcode::TYPE_TEST, IRValue::reg(is_dict_reg),
+			IRValue::reg(value_reg), IRValue::imm(m_native_classes
+				? (int64_t(1) << Variant::OBJECT) | (int64_t(1) << Variant::DICTIONARY)
+				: static_cast<int64_t>(Variant::DICTIONARY)));
 		set_register_type(func, is_dict_reg, Variant::BOOL);
 		emit_conditional_branch(IROpcode::BRANCH_ZERO, is_dict_reg, end_label, func);
 		free_register(func, is_dict_reg);

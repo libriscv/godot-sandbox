@@ -6,9 +6,7 @@
 #include "parser.h"
 #include "codegen.h"
 #include "ir_optimizer.h"
-#include "elf_builder.h"
 #include <iostream>
-#include <fstream>
 #include <stdexcept>
 #include <algorithm>
 #include <unordered_map>
@@ -43,7 +41,7 @@ std::string source_line_at(const std::string& source, int line) {
 
 Compiler::Compiler() {}
 
-std::vector<uint8_t> Compiler::compile(const std::string& source, const CompilerOptions& options) {
+std::optional<IRProgram> Compiler::compile_to_ir(const std::string& source, const CompilerOptions& options) {
 	m_signatures.clear();
 	m_signals.clear();
 	m_rpc_configs.clear();
@@ -56,6 +54,7 @@ std::vector<uint8_t> Compiler::compile(const std::string& source, const Compiler
 	m_line_table.entries.clear();
 	m_installed_breakpoints.clear();
 	m_warnings.clear();
+	m_is_tool = false;
 	m_class_name.clear();
 	m_base_class.clear();
 	m_base_is_path = false;
@@ -179,9 +178,15 @@ std::vector<uint8_t> Compiler::compile(const std::string& source, const Compiler
 				}), program.functions.end());
 		}
 
+		if (options.native_classes) {
+			for (auto &decl : program.structs)
+				if (decl.is_class && decl.base_name.empty()) decl.base_name = "RefCounted";
+		}
 		CodeGenerator codegen;
+		codegen.set_native_classes(options.native_classes);
 		codegen.set_dropped_tests(dropped_tests);
 		codegen.set_restricted(options.restricted);
+		codegen.set_batch_iteration(options.batch_iteration);
 		codegen.set_struct_checks(options.restricted ||
 			options.struct_checks != CompilerOptions::StructChecks::OFF,
 			options.struct_checks == CompilerOptions::StructChecks::DEEP);
@@ -338,64 +343,46 @@ std::vector<uint8_t> Compiler::compile(const std::string& source, const Compiler
 		m_native_base_class = ir_program.native_base_class;
 		m_native_base_is_path = ir_program.native_base_is_path;
 
-		std::vector<uint8_t> elf_data;
-
-		if (options.output_elf) {
-			ElfBuilder elf_builder;
-			// Host breakpoints imply debug_info; the `breakpoint` statement does not.
-			const bool debug_info = options.debug_info || !options.breakpoint_lines.empty();
-			elf_data = elf_builder.build(ir_program, VariantLayout(options.double_precision),
-				options.profiling, options.profiling_clock, debug_info, options.breakpoint_lines,
-				options.debug_step_points);
-			m_line_table = elf_builder.get_line_table();
-			m_installed_breakpoints = elf_builder.get_installed_breakpoints();
-			m_debug_variables = elf_builder.get_debug_variables();
-		}
-
 		m_error.clear();
 		m_error_info = {};
-		return elf_data;
+		return ir_program;
 
 	} catch (const CompilerException& e) {
-		// Only compile() has the source text, so attach the snippet here.
-		CompilerException located = e;
-		if (located.line() > 0 && located.source_line().empty() && located.file().empty()) {
-			located.set_source_line(source_line_at(source, located.line()));
-		}
-		m_error = located.what();
-		m_error_info = CompilerError{ true, located.error_type(), located.message(),
-			located.line(), located.column(), located.function(), located.hint() };
-		return {};
+		set_error(source, e);
+		return std::nullopt;
 	} catch (const std::exception& e) {
-		m_error = e.what();
-		m_error_info = CompilerError{};
-		m_error_info.has_error = true;
-		m_error_info.message = e.what();
-		return {};
+		set_error(e);
+		return std::nullopt;
 	}
 }
 
-bool Compiler::compile_to_file(const std::string& source, const std::string& output_path, const CompilerOptions& options) {
-	auto elf_data = compile(source, options);
-
-	if (elf_data.empty()) {
-		return false;
+void Compiler::set_error(const std::string& source, const CompilerException& e) {
+	CompilerException located = e;
+	if (located.line() > 0 && located.source_line().empty() && located.file().empty()) {
+		located.set_source_line(source_line_at(source, located.line()));
 	}
+	m_error = located.what();
+	m_error_info = CompilerError{ true, located.error_type(), located.message(),
+		located.line(), located.column(), located.function(), located.hint() };
+}
 
-	std::ofstream out(output_path, std::ios::binary);
-	if (!out) {
-		m_error = "Failed to open output file: " + output_path;
-		m_error_info = CompilerError{};
-		m_error_info.has_error = true;
-		m_error_info.type = ErrorType::ELF_ERROR;
-		m_error_info.message = m_error;
-		return false;
-	}
-
-	out.write(reinterpret_cast<const char*>(elf_data.data()), elf_data.size());
-	out.close();
-
-	return out.good();
+void Compiler::set_error(const std::exception& e) {
+	m_error = e.what();
+	m_error_info = CompilerError{};
+	m_error_info.has_error = true;
+	m_error_info.message = e.what();
 }
 
 } // namespace gdscript
+
+#include "c_codegen.h"
+namespace gdscript {
+std::optional<std::string> Compiler::compile_to_c(const std::string &source, CompilerOptions options) {
+    options.optimize = false;
+    options.batch_iteration = false;
+    auto program = compile_to_ir(source, options);
+    if (!program) return std::nullopt;
+    try { return CCodeGenerator().generate(*program); }
+    catch (const std::exception &error) { set_error(error); return std::nullopt; }
+}
+}

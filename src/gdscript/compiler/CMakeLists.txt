@@ -15,7 +15,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 option(DOUBLE_PRECISION "Enable double precision real_t" OFF)
 
 # Compiler sources
-set(COMPILER_SOURCES
+set(FRONTEND_SOURCES
     compiler_exception.cpp
 	debug_layout.cpp
     function_signature.cpp
@@ -33,21 +33,16 @@ set(COMPILER_SOURCES
     ir_optimizer.cpp
     ir_verifier.cpp
     codegen.cpp
-    riscv_codegen.cpp
-    riscv_globals.cpp
-    riscv_profiling.cpp
-    riscv_debug.cpp
-    register_allocator.cpp
-    elf_builder.cpp
     compiler.cpp
+    c_codegen.cpp
     ir_interpreter.cpp
     globals.cpp
     export_hints.cpp
 )
 
 # Build as library
-add_library(gdscript_compiler STATIC ${COMPILER_SOURCES})
-target_include_directories(gdscript_compiler PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+add_library(gdscript_frontend STATIC ${FRONTEND_SOURCES})
+target_include_directories(gdscript_frontend PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 
 # A dispatch over IROpcode must not have a bare `default:`. Without one, adding
 # an opcode to ir_opcodes.def turns every dispatch site into a compile error
@@ -55,7 +50,7 @@ target_include_directories(gdscript_compiler PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 # does the wrong thing. -Werror=switch is what makes that a rule rather than a
 # convention. PRIVATE, so a project embedding this library is not held to it.
 if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang|AppleClang")
-	target_compile_options(gdscript_compiler PRIVATE -Wswitch -Werror=switch)
+	target_compile_options(gdscript_frontend PRIVATE -Wswitch -Werror=switch)
 
 	# -Wunused-variable is what catches an option parsed and then never passed
 	# on, which is how `gdscript_to_riscv --no-optimize` spent a while quietly
@@ -63,13 +58,41 @@ if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang|AppleClang")
 	# compiler version and must not fail on one it words differently.
 	# Unused parameters are excluded -- several are part of a shared callback contract.
 	set(GDSC_WARNINGS -Wall -Wextra -Wno-unused-parameter)
-	target_compile_options(gdscript_compiler PRIVATE ${GDSC_WARNINGS})
+	target_compile_options(gdscript_frontend PRIVATE ${GDSC_WARNINGS})
 endif()
 
 if (DOUBLE_PRECISION OR GODOTCPP_PRECISION STREQUAL "double")
 	# PUBLIC: the default in CompilerOptions is a header-inline value, so every
 	# translation unit that includes compiler.h has to agree on it.
-	target_compile_definitions(gdscript_compiler PUBLIC DOUBLE_PRECISION_REAL_T)
+	target_compile_definitions(gdscript_frontend PUBLIC DOUBLE_PRECISION_REAL_T)
+endif()
+
+# A native backend only needs the frontend and its optimized IR output.
+option(GDSCRIPT_BUILD_RISCV "Build the RISC-V backend and compiler tools" ON)
+if (BUILD_TESTING)
+	enable_testing()
+	add_executable(test_frontend tests/test_frontend.cpp)
+	target_link_libraries(test_frontend gdscript_frontend)
+	target_compile_options(test_frontend PRIVATE ${GDSC_WARNINGS})
+	add_test(NAME test_frontend COMMAND test_frontend)
+endif()
+if (NOT GDSCRIPT_BUILD_RISCV)
+	return()
+endif()
+
+# Preserve the existing target and Compiler::compile() API for sandbox users.
+add_library(gdscript_compiler STATIC
+    compiler_riscv.cpp
+    riscv_codegen.cpp
+    riscv_globals.cpp
+    riscv_profiling.cpp
+    riscv_debug.cpp
+    register_allocator.cpp
+    elf_builder.cpp
+)
+target_link_libraries(gdscript_compiler PUBLIC gdscript_frontend)
+if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang|AppleClang")
+	target_compile_options(gdscript_compiler PRIVATE -Wswitch -Werror=switch ${GDSC_WARNINGS})
 endif()
 
 # Build demo executable

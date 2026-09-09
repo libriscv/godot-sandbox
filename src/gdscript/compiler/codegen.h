@@ -16,6 +16,7 @@ namespace gdscript {
 class CodeGenerator {
 public:
 	CodeGenerator();
+	void set_batch_iteration(bool enabled) { m_batch_iteration = enabled; }
 
 	IRProgram generate(const Program& program);
 
@@ -39,7 +40,10 @@ public:
 		m_test_functions.insert(names.begin(), names.end());
 	}
 
+	void set_native_classes(bool enabled) { m_native_classes = enabled; }
+
 private:
+	bool m_native_classes = false;
 	// Per-function state. Value type: lives on the stack for one function's
 	// lowering, so new fields are automatically fresh. Program-wide state
 	// (string constants, globals, label counter) stays on CodeGenerator.
@@ -473,6 +477,7 @@ private:
 	std::string m_current_chain_function;
 	bool m_restricted = false;
 	bool m_struct_checks = true;
+	bool m_batch_iteration = true;
 	bool m_struct_deep_checks = false;
 	bool m_trait_structural_fallback = true;
 	std::string m_source_path;

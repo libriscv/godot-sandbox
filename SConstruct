@@ -54,6 +54,8 @@ compiler_sources = compiler_host_sources + [
     "src/gdscript/compiler/register_allocator.cpp",
     "src/gdscript/compiler/elf_builder.cpp",
     "src/gdscript/compiler/compiler.cpp",
+    "src/gdscript/compiler/c_codegen.cpp",
+    "src/gdscript/compiler/compiler_riscv.cpp",
 ]
 
 # Where the SafeGDScript compiler runs (src/safegdscript/compiler_backend.h):
