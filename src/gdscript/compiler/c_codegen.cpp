@@ -289,7 +289,8 @@ struct Emitter {
     }
     void function(const IRFunction &f, size_t index) {
         scalars = scalar_locals(f);
-        if (debug) std::fill(scalars.begin(), scalars.end(), -1);
+        // Every coroutine local must survive suspension as an owned Variant.
+        if (debug || f.is_coroutine) std::fill(scalars.begin(), scalars.end(), -1);
         boxes.assign(scalars.size(),false);
         std::vector<bool> used(scalars.size(), false);
         std::vector<int> reads(scalars.size(), 0), writes(scalars.size(), 0);
@@ -301,13 +302,19 @@ struct Emitter {
                 if (ir_writes_operand(i, j)) ++writes[i.operands[j].reg_index()];
         }
         used[0] = true;
-        if (debug) std::fill(used.begin(), used.end(), true);
+        if (debug || f.is_coroutine) std::fill(used.begin(), used.end(), true);
         for (const auto &i : f.instructions)
             for (const auto &v : i.operands)
                 if (v.type == IRValue::Type::REGISTER) used[v.reg_index()] = true;
         auto prefix = std::move(out);
         out = std::ostringstream();
         const int registers = std::max(1, f.max_registers);
+        if (f.is_coroutine) {
+            out << "  int suspended = 0;\n  void *resuming = count == -1 ? ctx->resuming : 0;\n";
+            out << "  GJVariant *slots[" << registers << "] = {";
+            for (int j = 0; j < registers; ++j) out << (j ? "," : "") << "&r" << j;
+            out << "};\n";
+        }
         if (debug) {
             out << "  const GJVariant *debug_locals[" << registers << "] = {";
             for (int j = 0; j < registers; ++j) out << (j ? "," : "") << "&r" << j;
@@ -316,6 +323,13 @@ struct Emitter {
                 << "  if (ctx->debug) ctx->debug(ctx,&debug_frame,GJ_DEBUG_ENTER);\n";
         }
         out << "  GJVariant temp = {0};\n";
+        if (f.is_coroutine) {
+            out << "  if (resuming) { ctx->resuming = 0; switch (gj_await_restore(ctx,resuming,slots," << registers << ")) {\n";
+            for (size_t at = 0; at < f.instructions.size(); ++at)
+                if (f.instructions[at].opcode == IROpcode::AWAIT)
+                    out << "    case " << at << ": goto resume" << at << ";\n";
+            out << "    default: gj_fail(ctx,\"Invalid coroutine resume state\"); goto cleanup;\n  }}\n";
+        }
         out << "  if (count != " << f.parameters.size() << ") {"; fail("Wrong argument count for " + f.name); out << "  }\n";
         // Unreferenced parameters need no local ownership (notably unused
         // container arguments). Arity and runtime signature checks still apply.
@@ -406,7 +420,10 @@ struct Emitter {
                 out << "  if (" << r(a[0]) << ".type == 2) switch (" << r(a[0]) << ".data.i) {\n";
                 for (size_t j = 3; j < a.size(); ++j) out << "    case " << integer(int64_t(uint64_t(a[1].immediate()) + j - 3)) << ": goto " << label(a[j]) << ";\n";
                 out << "  }\n"; break;
-            case IROpcode::CALL: {
+            // Native coroutine entries return their completion Signal directly;
+            // the sandbox-only host trampoline is unnecessary here.
+            case IROpcode::CALL:
+            case IROpcode::CALL_HOSTED: {
                 auto it = functions.find(p.strings[a[0].string_id]);
                 if (it == functions.end()) throw std::runtime_error("C backend: unknown function " + p.strings[a[0].string_id]);
                 auto av = args(i, 3);
@@ -416,7 +433,6 @@ struct Emitter {
                 if (av.empty()) out << '0';
                 out << "}; if (!f" << it->second << "(ctx," << reg(1) << ",a," << av.size() << ")) goto cleanup; }\n"; break;
             }
-            case IROpcode::CALL_HOSTED: op("GJ_CALL", reg(1), "ctx->self", name(a[0]), -1, args(i, 3)); break;
             case IROpcode::RETURN: out << "  goto cleanup;\n"; break;
             case IROpcode::VCALL: method(i); break;
             case IROpcode::VGET: op("GJ_GET_NAMED", reg(0), reg(1), constant(a[2])); break;
@@ -520,6 +536,10 @@ struct Emitter {
             case IROpcode::TRAIT_TEST:
                 op("GJ_TRAIT_TEST", reg(0), reg(1), "0", a[2].immediate()); break;
             case IROpcode::AWAIT:
+                out << "  suspended = gj_await(ctx,resuming," << index << "," << at
+                    << ",result," << reg(1) << ",slots," << registers << "," << a[0].reg_index() << ");\n"
+                    << "  if (suspended) goto cleanup;\nresume" << at << ":;\n";
+                break;
             case IROpcode::MAKE_SCOPED: case IROpcode::BATCH_GET: case IROpcode::CODEPOINT_GET:
                 unsupported(f, i);
             }
@@ -534,7 +554,7 @@ struct Emitter {
         out << "cleanup:\n";
         if (debug) out << "  if (ctx->debug) ctx->debug(ctx,&debug_frame,GJ_DEBUG_EXIT);\n";
         box("&r0");
-        out << "  if (!ctx->failed) gj_move(result,&r0);\n";
+        out << "  if (!ctx->failed" << (f.is_coroutine ? " && !suspended" : "") << ") gj_move(result,&r0);\n";
         for (int j = 0; j < registers; ++j) if (used[j] && scalars[j] < 0) { boxes[j] = true; out << "  gj_clear(&r" << j << ");\n"; }
         out << "  gj_clear(&temp);\n  return !ctx->failed;\n}\n";
         auto body = out.str();

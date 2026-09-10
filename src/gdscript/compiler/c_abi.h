@@ -50,6 +50,7 @@ typedef struct GJContext {
     GJVariant *shared_globals; /* optional; null preserves standalone storage */
     void *runtime; /* native ScriptInstance/Callable bridge */
     GJDebugHook debug; /* optional; absent in non-debug generated code */
+    void *resuming; /* private suspended frame, consumed by coroutine entry */
 } GJContext;
 
 enum GJOperation {
@@ -77,6 +78,12 @@ int gj_fail(GJContext *ctx, const char *message);
 /* Checked loop step: 1 publishes an item, 0 ends iteration, -1 fails.
  * Rechecks the current size each time, so mutations remain visible. */
 int gj_array_next(GJContext *ctx, GJVariant *item, GJVariant *array, GJInt index);
+/* Await returns 1 on suspension, 0 immediately, -1 on failure. Restore
+ * returns the instruction to resume, or -1 on failure. Slots are owned locals. */
+int gj_await(GJContext *, void *resuming, int function, int instruction,
+             GJVariant *result, const GJVariant *operand, GJVariant *const *slots,
+             int count, int destination);
+int gj_await_restore(GJContext *, void *resuming, GJVariant *const *slots, int count);
 typedef int (*GJEntry)(GJContext *, int function, GJVariant *result,
                        const GJVariant *const *args, int count);
 #ifdef __cplusplus
