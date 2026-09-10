@@ -377,7 +377,12 @@ struct Emitter {
                 }
                 break;
             case IROpcode::TYPE_OF: reg(1); out << "  gj_int(" << reg(0) << ',' << r(a[1]) << ".type);\n"; break;
-            case IROpcode::TYPE_TEST: reg(1); out << "  gj_bool(" << reg(0) << ',' << r(a[1]) << ".type == " << a[2].immediate() << ");\n"; break;
+            case IROpcode::TYPE_TEST:
+                reg(1);
+                out << "  gj_bool(" << reg(0) << ',' << r(a[1]) << ".type == " << a[2].immediate();
+                if (a[2].immediate() == 24) out << " && gj_boolean(" << reg(1) << ")";
+                out << ");\n";
+                break;
             case IROpcode::TYPE_TEST_MASK: reg(1); out << "  gj_bool(" << reg(0) << ",(" << integer(a[2].immediate()) << " & (1ULL << " << r(a[1]) << ".type)) != 0);\n"; break;
             case IROpcode::SCOPE_MARK: case IROpcode::SCOPE_RELEASE: break;
             case IROpcode::BREAKPOINT: break; // Handled by the debug hook above.

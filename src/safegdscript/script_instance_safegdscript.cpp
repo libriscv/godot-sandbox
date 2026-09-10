@@ -287,7 +287,7 @@ void SafeGDScriptInstance::refcount_incremented() {
 }
 
 bool SafeGDScriptInstance::refcount_decremented() {
-	return false;
+	return true;
 }
 
 Object *SafeGDScriptInstance::get_owner() {
@@ -342,6 +342,14 @@ struct SandboxAndCount {
 	unsigned count = 0;
 };
 static std::unordered_map<SafeGDScript *, SandboxAndCount> sandbox_instances;
+
+static void retire_sandbox(Sandbox *sandbox) {
+	// A host may be released after SceneTree's final deletion-queue flush
+	// (notably ResourceLoader's custom loaders). Delete idle machines now;
+	// only an executing machine needs deferred destruction.
+	if (sandbox->is_in_vmcall()) sandbox->queue_free();
+	else memdelete(sandbox);
+}
 
 // One Sandbox per script, shared by every instance of it, so the profiling
 // toggle names a script rather than a node. Looked up from the toggle, which
@@ -448,11 +456,7 @@ void safegdscript_release_sandbox(SafeGDScript *p_script, Object *p_owner) {
 	if (it->second.count == 0) {
 		Sandbox *sandbox = it->second.sandbox;
 		sandbox_instances.erase(it);
-		if (Object::cast_to<SceneTree>(Engine::get_singleton()->get_main_loop()) != nullptr) {
-			sandbox->queue_free();
-		} else {
-			memdelete(sandbox);
-		}
+		retire_sandbox(sandbox);
 	} else if (Node *owner_node = fast_cast_to<Node>(p_owner)) {
 		if (it->second.sandbox->get_tree_base_id() == godot::ObjectID(owner_node->get_instance_id())) {
 			it->second.sandbox->set_tree_base(nullptr);
@@ -517,8 +521,9 @@ SafeGDScriptInstance::~SafeGDScriptInstance() {
 			it->second.sandbox->destroy_instance_record(this->instance_base);
 		}
 		if (it->second.count == 0) {
-			it->second.sandbox->queue_free();
+			Sandbox *sandbox = it->second.sandbox;
 			sandbox_instances.erase(it);
+			retire_sandbox(sandbox);
 		} else if (Node *owner_node = fast_cast_to<Node>(this->owner)) {
 			if (it->second.sandbox->get_tree_base_id() == godot::ObjectID(owner_node->get_instance_id())) {
 				it->second.sandbox->set_tree_base(nullptr);

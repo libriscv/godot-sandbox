@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
-"""Exercise godot-demo-projects with byte-identical GDScript/SafeGDScript.
+"""Exercise godot-demo-projects with GDScript and an alternate script language.
 
-The harness deliberately never edits script contents.  Safe mode creates an
-``.sgd`` peer for every ``.gd`` file and switches references in Godot resource
-files.  A small state file in each project makes the operation reversible and
-guards against overwriting edits made while Safe mode is active.
+Original .gd files remain byte-identical. Generated peers convert known script
+path literals as well as resource references, preserving typed script identity.
+A state file makes conversion reversible and protects edits made in that mode.
 """
 
 from __future__ import annotations
@@ -33,6 +32,13 @@ from typing import Iterable, Sequence
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_DEMOS_ROOT = REPO_ROOT.parent / "godot-demo-projects"
+SCRIPT_MODE = "sgd"
+SCRIPT_SUFFIX = ".sgd"
+LANGUAGE_NAME = "SafeGDScript"
+LIBRARY_NAME = "libgodot-riscv.so"
+ENTRY_SYMBOL = "riscv_library_init"
+MINIMUM_VERSION = "4.4"
+DESCRIPTOR_NAME = "safegdscript.gdextension"
 STATE_NAME = ".safegdscript-compat.json"
 ADDON_REL = Path("addons/safegdscript_compat_harness")
 EXTENSION_RESOURCE_PATH = "res://addons/safegdscript_compat_harness/safegdscript.gdextension"
@@ -259,7 +265,7 @@ def uid_map(project: Path, scripts: Sequence[str]) -> dict[bytes, bytes]:
     for relative in scripts:
         gd = project / relative
         old_uid = read_uid(gd.with_name(gd.name + ".uid"))
-        sgd = gd.with_suffix(".sgd")
+        sgd = gd.with_suffix(SCRIPT_SUFFIX)
         new_uid = read_uid(sgd.with_name(sgd.name + ".uid"))
         if old_uid and new_uid and old_uid != new_uid:
             mapping[old_uid] = new_uid
@@ -275,19 +281,19 @@ def stage_extension(project: Path, library: Path) -> None:
     machine = platform.machine().lower()
     if system != "Linux" or machine not in ("x86_64", "amd64"):
         raise HarnessError(f"automatic extension staging currently supports Linux x86_64, not {system} {machine}")
-    link = addon / "libgodot-riscv.so"
+    link = addon / LIBRARY_NAME
     link.symlink_to(library)
-    descriptor = b"""[configuration]
+    descriptor = f"""[configuration]
 
-entry_symbol = "riscv_library_init"
-compatibility_minimum = "4.4"
+entry_symbol = "{ENTRY_SYMBOL}"
+compatibility_minimum = "{MINIMUM_VERSION}"
 
 [libraries]
 
-linux.debug.x86_64 = "./libgodot-riscv.so"
-linux.release.x86_64 = "./libgodot-riscv.so"
+linux.debug.x86_64 = "./{LIBRARY_NAME}"
+linux.release.x86_64 = "./{LIBRARY_NAME}"
 """
-    atomic_write(addon / "safegdscript.gdextension", descriptor)
+    atomic_write(addon / DESCRIPTOR_NAME, descriptor.encode())
 
     godot_dir = project / ".godot"
     godot_dir.mkdir(exist_ok=True)
@@ -377,11 +383,7 @@ def run_godot(
 
 
 def combine_imports(first: RunResult, second: RunResult) -> RunResult:
-    """Keep diagnostics seen in either import without double-counting repeats."""
-    counts: Counter[str] = Counter(first.diagnostics)
-    for diagnostic, count in Counter(second.diagnostics).items():
-        counts[diagnostic] = max(counts[diagnostic], count)
-    diagnostics = [diagnostic for diagnostic, count in counts.items() for _ in range(count)]
+    """Score final-import diagnostics; retain bootstrap logs and process failures."""
     return RunResult(
         project=second.project,
         phase="import",
@@ -389,15 +391,44 @@ def combine_imports(first: RunResult, second: RunResult) -> RunResult:
         returncode=first.returncode if first.returncode not in (0, None) else second.returncode,
         timed_out=first.timed_out or second.timed_out,
         seconds=first.seconds + second.seconds,
-        diagnostics=diagnostics,
+        diagnostics=second.diagnostics,
         log=f"{first.log}; {second.log}",
     )
+
+
+# Match comments and complete strings first so a path-shaped fragment in a
+# comment or a multiline message cannot be mistaken for a resource literal.
+SCRIPT_TOKEN = re.compile(rb"\#[^\r\n]*|\"\"\"[\s\S]*?\"\"\"|\x27\x27\x27[\s\S]*?\x27\x27\x27|\"(?:\\.|[^\"\\])*\"|\x27(?:\\.|[^\x27\\])*\x27")
+
+
+def converted_script(project: Path, script: Path, scripts: Sequence[Path]) -> bytes:
+    known = {path.resolve() for path in scripts}
+
+    def convert(match: re.Match[bytes]) -> bytes:
+        token = match.group()
+        if token[:1] == b"#" or token.startswith((b'"""', b"\x27\x27\x27")):
+            return token
+        path_bytes = token[1:-1]
+        if not path_bytes.endswith(b".gd") or b"\\" in path_bytes:
+            return token
+        path = path_bytes.decode("utf-8")
+        if path.startswith("res://"):
+            target = project / path[6:]
+        elif "://" in path or Path(path).is_absolute():
+            return token
+        else:
+            target = script.parent / path
+        if target.resolve() not in known:
+            return token
+        return token[:1] + path_bytes[:-3] + SCRIPT_SUFFIX.encode() + token[-1:]
+
+    return SCRIPT_TOKEN.sub(convert, script.read_bytes())
 
 
 def internal_gd_references(project: Path, scripts: Sequence[Path]) -> list[str]:
     references: list[str] = []
     for script in scripts:
-        data = script.read_bytes()
+        data = converted_script(project, script, scripts)
         if QUOTED_GD_PATH.search(data):
             references.append(script.relative_to(project).as_posix())
     return references
@@ -413,30 +444,45 @@ def to_safe_mode(
 ) -> RunResult:
     existing = load_state(project)
     if existing:
-        if existing.get("mode") != "sgd":
+        if existing.get("mode") != SCRIPT_MODE:
             raise HarnessError(f"{project}: incomplete Safe mode state; toggle back to gd first")
         return run_godot(godot, project, root, "import", ("--import",), timeout, log_dir)
 
     scripts = source_files(project)
     relatives = [path.relative_to(project).as_posix() for path in scripts]
-    collisions = [path.with_suffix(".sgd") for path in scripts if path.with_suffix(".sgd").exists()]
+    collisions = [path.with_suffix(SCRIPT_SUFFIX) for path in scripts if path.with_suffix(SCRIPT_SUFFIX).exists()]
     if collisions:
         raise HarnessError(f"{project}: refusing to replace existing {collisions[0]}")
     if (project / ADDON_REL).exists():
         raise HarnessError(f"{project}: generated addon path already exists")
 
     state: dict[str, object] = {
-        "version": 1,
+        "version": 2,
         "mode": "preparing",
         "scripts": relatives,
         "rewritten": [],
+        "generated_sha256": {},
+        "original_sha256": {str(path.relative_to(project)): sha256(path.read_bytes()) for path in scripts},
         "internal_gd_references": internal_gd_references(project, scripts),
     }
     save_state(project, state)
     try:
         for gd in scripts:
-            shutil.copy2(gd, gd.with_suffix(".sgd"))
+            converted = converted_script(project, gd, scripts)
+            state["generated_sha256"][gd.relative_to(project).as_posix()] = sha256(converted)
+        save_state(project, state)
+        for gd in scripts:
+            atomic_write(gd.with_suffix(SCRIPT_SUFFIX), converted_script(project, gd, scripts))
         stage_extension(project, library)
+        # Only one format may participate in the global class scan. Keep the
+        # original bytes in an ignored directory until restoration, otherwise
+        # class_name can still resolve to .gd even after all literals change.
+        originals = project / ADDON_REL / "originals"
+        atomic_write(originals / ".gdignore", b"")
+        for gd in scripts:
+            backup = originals / gd.relative_to(project)
+            backup.parent.mkdir(parents=True, exist_ok=True)
+            gd.rename(backup)
 
         # This pass registers the extension and gives .sgd resources stable UIDs.
         bootstrap = run_godot(
@@ -446,7 +492,7 @@ def to_safe_mode(
         rewritten: list[dict[str, str]] = []
         for path in reference_files(project):
             original = path.read_bytes()
-            converted = GD_SUFFIX.sub(b".sgd", original)
+            converted = GD_SUFFIX.sub(SCRIPT_SUFFIX.encode(), original)
             for old_uid, new_uid in uids.items():
                 converted = converted.replace(old_uid, new_uid)
             if converted == original:
@@ -460,7 +506,7 @@ def to_safe_mode(
             )
             atomic_write(path, converted)
         state["rewritten"] = rewritten
-        state["mode"] = "sgd"
+        state["mode"] = SCRIPT_MODE
         save_state(project, state)
     except Exception:
         # The state file intentionally remains so `toggle gd` can recover.
@@ -495,21 +541,35 @@ def to_gd_mode(
             raise HarnessError(f"{path} changed in Safe mode; refusing to overwrite it")
     for relative in state.get("scripts", []):
         gd = project / str(relative)
-        sgd = gd.with_suffix(".sgd")
-        if sgd.exists() and gd.exists() and sha256(sgd.read_bytes()) != sha256(gd.read_bytes()):
-            raise HarnessError(f"{sgd} is no longer byte-identical to {gd}; refusing to remove it")
+        backup = project / ADDON_REL / "originals" / str(relative)
+        original_hash = state.get("original_sha256", {}).get(str(relative))
+        if original_hash:
+            original = backup if backup.exists() else gd
+            if not original.exists() or sha256(original.read_bytes()) != original_hash:
+                raise HarnessError(f"{original} changed in converted mode; refusing to overwrite it")
+            if backup.exists() and gd.exists():
+                raise HarnessError(f"{gd} was created in converted mode; refusing to overwrite it")
+        sgd = gd.with_suffix(SCRIPT_SUFFIX)
+        expected = state.get("generated_sha256", {}).get(str(relative))
+        if expected is None and gd.exists():  # Recover version 1 byte-exact state.
+            expected = sha256(gd.read_bytes())
+        if sgd.exists() and (expected is None or sha256(sgd.read_bytes()) != expected):
+            raise HarnessError(f"{sgd} changed in converted mode; refusing to remove it")
 
     for item in state.get("rewritten", []):
         path = project / str(item["path"])
         atomic_write(path, base64.b64decode(str(item["original"])))
     for relative in state.get("scripts", []):
         gd = project / str(relative)
-        sgd = gd.with_suffix(".sgd")
+        sgd = gd.with_suffix(SCRIPT_SUFFIX)
         uid = sgd.with_name(sgd.name + ".uid")
         if sgd.exists():
             sgd.unlink()
         if uid.exists():
             uid.unlink()
+        backup = project / ADDON_REL / "originals" / str(relative)
+        if backup.exists():
+            backup.rename(gd)
     unstage_extension(project)
     state_path(project).unlink()
     if reimport:
@@ -518,7 +578,7 @@ def to_gd_mode(
 
 
 def mode_for(projects: Sequence[Path]) -> str:
-    modes = {"sgd" if load_state(project) else "gd" for project in projects}
+    modes = {SCRIPT_MODE if load_state(project) else "gd" for project in projects}
     if len(modes) != 1:
         raise HarnessError("selected projects are in mixed modes; toggle them to one mode first")
     return modes.pop()
@@ -593,11 +653,11 @@ def normalized_diagnostics(result: RunResult) -> Counter[str]:
         # Safe-mode scan resolves the .sgd class, so this is harness noise.
         if re.search(r'Parse Error: Class ".+" hides a global script class\.$', line):
             continue
-        if ".sgd" not in line and re.search(
+        if SCRIPT_SUFFIX not in line and re.search(
             r'Failed to load script "res://.+\.gd" with error "Parse error"\.$', line
         ):
             continue
-        line = line.replace(".sgd", ".gd")
+        line = line.replace(SCRIPT_SUFFIX, ".gd")
         line = re.sub(r"\b0x[0-9a-fA-F]+\b", "0xADDR", line)
         for form in NULL_CALL_FORMS:
             match = form.match(line)
@@ -659,7 +719,7 @@ def compare_results(
 ) -> tuple[int, list[str]]:
     baseline_by_key = {(result.project, result.phase): result for result in baseline}
     lines = [
-        "# SafeGDScript demo compatibility",
+        f"# {LANGUAGE_NAME} demo compatibility",
         "",
         "| Project | Phase | Result | New diagnostics |",
         "|---|---:|---:|---:|",
@@ -685,10 +745,10 @@ def compare_results(
     if mixed_references:
         lines.extend(
             (
-                "## Byte-exact coverage notes",
+                "## Unresolved script path literals",
                 "",
-                "These SafeGDScript files still load a `.gd` path because rewriting the "
-                "literal would change the oracle bytes:",
+                "These files retain `.gd` literals that could not be resolved to a local script. "
+                "Dynamic script paths need manual review:",
                 "",
             )
         )
@@ -710,7 +770,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, default=DEFAULT_DEMOS_ROOT, help="godot-demo-projects checkout")
     parser.add_argument("--godot", help="Godot editor executable (or set GODOT)")
-    parser.add_argument("--extension", help="built SafeGDScript GDExtension library")
+    parser.add_argument("--extension", help=f"built {LANGUAGE_NAME} GDExtension library")
     parser.add_argument("--timeout", type=float, default=60.0, help="seconds allowed per Godot invocation")
     parser.add_argument(
         "--results",
@@ -738,7 +798,7 @@ def build_parser() -> argparse.ArgumentParser:
     add_selection_options(listing)
 
     toggle = subparsers.add_parser("toggle", help="switch selected projects and re-import")
-    toggle.add_argument("mode", choices=("gd", "sgd"))
+    toggle.add_argument("mode", choices=("gd", SCRIPT_MODE))
     toggle.add_argument("projects", nargs="*", help="relative path glob or substring")
     add_selection_options(toggle)
 
@@ -764,7 +824,7 @@ def build_parser() -> argparse.ArgumentParser:
     add_runtime_options(test)
     add_selection_options(test)
 
-    matrix = subparsers.add_parser("matrix", help="compare GDScript and SafeGDScript, then restore GDScript")
+    matrix = subparsers.add_parser("matrix", help=f"compare GDScript and {LANGUAGE_NAME}, then restore GDScript")
     matrix.add_argument("projects", nargs="*", help="relative path glob or substring")
     add_runtime_options(matrix)
     add_selection_options(matrix)
@@ -800,19 +860,20 @@ def main(argv: Sequence[str] | None = None) -> int:
     projects = discover_projects(root, args.projects, excludes)
     if args.command == "list":
         for project in projects:
-            mode = "sgd" if load_state(project) else "gd"
+            mode = SCRIPT_MODE if load_state(project) else "gd"
             print(f"{project_name(project, root)}\t{mode}")
         return 0
 
     godot = find_godot(args.godot)
+    args.results = args.results.expanduser().resolve()
     args.results.mkdir(parents=True, exist_ok=True)
     if args.command == "toggle":
         log_dir = new_results_dir(args.results, f"toggle-{args.mode}")
-        library = find_extension(args.extension) if args.mode == "sgd" else None
+        library = find_extension(args.extension) if args.mode == SCRIPT_MODE else None
         failures = 0
         for project in projects:
             try:
-                if args.mode == "sgd":
+                if args.mode == SCRIPT_MODE:
                     assert library is not None
                     result = to_safe_mode(project, root, godot, library, args.timeout, log_dir)
                 else:
@@ -823,7 +884,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 state = load_state(project)
                 if state and state.get("internal_gd_references"):
                     count = len(state["internal_gd_references"])  # type: ignore[arg-type]
-                    print(f"NOTE {project_name(project, root)}: {count} scripts retain byte-exact .gd path literals")
+                    print(f"NOTE {project_name(project, root)}: {count} scripts retain unresolved .gd path literals")
             except Exception as error:
                 failures += 1
                 print(f"FAIL {project_name(project, root)}: {error}", file=sys.stderr)
@@ -848,7 +909,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     library = find_extension(args.extension)
     matrix_dir = new_results_dir(args.results, "matrix")
     baseline_dir = matrix_dir / "gd"
-    safe_dir = matrix_dir / "sgd"
+    safe_dir = matrix_dir / SCRIPT_MODE
     baseline_dir.mkdir()
     safe_dir.mkdir()
     baseline: list[RunResult] = []
@@ -881,7 +942,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             import_projects=False,
         )
         safe = safe_imports + safe_runs
-        write_summary(safe_dir / "summary.json", "sgd", safe)
+        write_summary(safe_dir / "summary.json", SCRIPT_MODE, safe)
     finally:
         for project in projects:
             try:

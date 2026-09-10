@@ -14006,6 +14006,45 @@ func completion_count():
 	assert_eq(node.call("completion_count"), 1, "the host should resume the setter coroutine")
 	node.free()
 
+func test_sgd_initializers_release_temporary_objects_before_the_first_call():
+	const key = "sgd_initializer_temporary_object"
+	var source = """extends Node
+var initialized = make_temporary()
+func make_temporary() -> bool:
+	var temporary = RefCounted.new()
+	Engine.set_meta("sgd_initializer_temporary_object", temporary.get_instance_id())
+	return true
+"""
+	var compiler := Sandbox.new()
+	compiler.set_program(Sandbox_TestsTests)
+	compiler.restrictions = true
+	var elf: PackedByteArray = compiler.vmcall("compile_to_elf", source)
+	assert_false(elf.is_empty(), "the initializer fixture should compile")
+	compiler.queue_free()
+	if elf.is_empty():
+		return
+
+	var sandbox := Sandbox.new()
+	sandbox.load_buffer(elf)
+	# Inspect through the engine: calling the guest could hide delayed cleanup.
+	var temporary_id = Engine.get_meta(key, 0)
+	assert_ne(temporary_id, 0, "startup should create a temporary object")
+	assert_false(is_instance_id_valid(temporary_id), "startup should release its temporary before any vmcall")
+	sandbox.queue_free()
+	Engine.remove_meta(key)
+
+	var script = SafeGDScript.new()
+	script.source_code = source
+	assert_eq(script.reload(), OK, "the instance initializer fixture should compile")
+	for i in range(2):
+		var node := Node.new()
+		node.set_script(script)
+		temporary_id = Engine.get_meta(key, 0)
+		assert_ne(temporary_id, 0, "the instance initializer should create a temporary object")
+		assert_false(is_instance_id_valid(temporary_id), "instance initialization should release its temporary before any vmcall")
+		Engine.remove_meta(key)
+		node.free()
+
 func test_sgd_instance_initializers_release_temporary_variants():
 	# This mirrors physics_tests' Array[Dictionary] member. Its default record
 	# consumes most of references_max while loading; initializing another instance

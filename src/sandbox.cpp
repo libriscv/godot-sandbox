@@ -13,6 +13,7 @@
 #include "sandbox_project_settings.h"
 #include "scoped_tree_base.h"
 #include "variant_coerce.h"
+#include <cassert>
 #include <godot_cpp/classes/engine.hpp>
 #include <godot_cpp/classes/os.hpp>
 #include <godot_cpp/classes/time.hpp>
@@ -621,7 +622,7 @@ void Sandbox::run_instance_initializer(gaddr_t address, gaddr_t base) {
 	// state zero made every key/string used to build a member permanent, so a
 	// second instance of a moderately large literal exhausted the reference cap.
 	this->m_current_state = previous_state + 1;
-	this->m_current_state->reset();
+	assert(!this->m_current_state->dirty);
 	this->reserve_call_state(*this->m_current_state);
 
 	const gaddr_t previous_base = this->m_instance_base;
@@ -664,6 +665,8 @@ void Sandbox::run_instance_initializer(gaddr_t address, gaddr_t base) {
 		this->handle_exception(address);
 	}
 
+	// Keep this level active while releasing temporaries: predelete can reenter.
+	this->m_current_state->reset();
 	this->m_instance_base = previous_base;
 	this->m_current_state = previous_state;
 }
@@ -1077,7 +1080,7 @@ bool Sandbox::load(const PackedByteArray *buffer, const std::vector<std::string>
 				startup_state + 1 < this->m_states.data() + this->m_states.size()) {
 				elevated_startup = true;
 				this->m_current_state = startup_state + 1;
-				this->m_current_state->reset();
+				assert(!this->m_current_state->dirty);
 				this->reserve_call_state(*this->m_current_state);
 			}
 			if (!this->get_precise_simulation()) {
@@ -1110,6 +1113,7 @@ bool Sandbox::load(const PackedByteArray *buffer, const std::vector<std::string>
 	// Promote before restoring state; runs on the failing path too.
 	if (elevated_startup) {
 		this->promote_startup_handles();
+		this->m_current_state->reset();
 		this->m_current_state = startup_state;
 	}
 
@@ -1545,7 +1549,16 @@ void Sandbox::vmcall_internal(gaddr_t address, const Variant **args, int argc,
 
 	CurrentState &state = *this->m_current_state;
 	const bool is_reentrant_call = (this->m_current_state - beginptr) > 1;
-	state.reset();
+	// Recursive call state releases it before returning to parent
+	assert(!state.dirty);
+	struct CallStateScope {
+		Sandbox &self;
+		CurrentState &state;
+		~CallStateScope() {
+			state.reset();
+			self.m_current_state -= 1;
+		}
+	} call_state_scope{ *this, state };
 
 	// Call statistics
 	this->m_calls_made++;
@@ -1646,7 +1659,6 @@ void Sandbox::vmcall_internal(gaddr_t address, const Variant **args, int argc,
 		// Suspended coroutine: return the Signal to await, not the function result.
 		if (UNLIKELY(this->m_pending_suspend != 0)) {
 			const uint64_t suspended = this->m_pending_suspend;
-			this->m_current_state -= 1;
 			// Leave the flag for coroutine_resume() to distinguish re-suspension from return.
 			if (this->m_resuming_coroutine_id == suspended) {
 				r_out = Variant();
@@ -1666,8 +1678,6 @@ void Sandbox::vmcall_internal(gaddr_t address, const Variant **args, int argc,
 
 		// Treat return value as pointer to Variant
 		retvar->toVariant(*this, r_out);
-		// Restore the previous state
-		this->m_current_state -= 1;
 		return;
 
 	} catch (const std::exception &e) {
@@ -1684,7 +1694,6 @@ void Sandbox::vmcall_internal(gaddr_t address, const Variant **args, int argc,
 			this->m_pending_suspend = 0;
 			this->retire_coroutine(suspended, true);
 		}
-		this->m_current_state -= 1;
 		r_out = Variant();
 		return;
 	}
