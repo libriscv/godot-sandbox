@@ -322,7 +322,7 @@ struct Emitter {
                 << (!f.parameters.empty() && f.parameters.front() == "self" ? "count > 0 ? args[0] : ctx->self" : "ctx->self") << "};\n"
                 << "  if (ctx->debug) ctx->debug(ctx,&debug_frame,GJ_DEBUG_ENTER);\n";
         }
-        out << "  GJVariant temp = {0};\n";
+        out << "  GJVariant temp; temp.type = 0; temp.reserved = 0; temp.data.i = 0;\n";
         if (f.is_coroutine) {
             out << "  if (resuming) { ctx->resuming = 0; switch (gj_await_restore(ctx,resuming,slots," << registers << ")) {\n";
             for (size_t at = 0; at < f.instructions.size(); ++at)
@@ -484,7 +484,22 @@ struct Emitter {
             case IROpcode::MAKE_VECTOR2I: case IROpcode::MAKE_VECTOR3I: case IROpcode::MAKE_VECTOR4I:
             case IROpcode::MAKE_COLOR: case IROpcode::MAKE_RECT2: case IROpcode::MAKE_RECT2I: case IROpcode::MAKE_PLANE: {
                 const int types[] = {5,9,12,6,10,13,20,7,8,14};
-                op("GJ_CONSTRUCT", reg(0), "0", "0", types[int(i.opcode)-int(IROpcode::MAKE_VECTOR2)], args(i,1)); break;
+                const int type = types[int(i.opcode)-int(IROpcode::MAKE_VECTOR2)];
+                const int components = type == 5 ? 2 : type == 9 ? 3 : type == 12 ? 4 : 0;
+                bool numeric = components && a.size() == size_t(components + 1);
+                for (size_t j = 1; numeric && j < a.size(); ++j) numeric = scalar(r(a[j])) >= 2;
+                if (numeric) {
+                    out << "  {\n";
+                    for (int j = 0; j < components; ++j)
+                        // Godot's constructor accepts double before narrowing
+                        // to real_t. Preserve both rounding steps for large ints.
+                        out << "    GJReal v" << j << " = (double)(" << payload(r(a[j+1]), scalar(r(a[j+1]))) << ");\n";
+                    out << "    gj_clear(" << reg(0) << "); " << r(a[0]) << ".type = " << type << ";\n";
+                    for (int j = 0; j < components; ++j)
+                        out << "    " << r(a[0]) << ".data.real[" << j << "] = v" << j << ";\n";
+                    out << "  }\n";
+                } else op("GJ_CONSTRUCT", reg(0), "0", "0", type, args(i,1));
+                break;
             }
             case IROpcode::GLOBAL_CALL:
                 if (a.size() == 5 && static_cast<GlobalFn>(a[1].immediate()) == GlobalFn::TO_INT) {
@@ -562,7 +577,11 @@ struct Emitter {
         out << "static int f" << index << "(GJContext *ctx, GJVariant *result, const GJVariant *const *args, int count) {\n";
         for (int j = 0; j < registers; ++j) {
             if (boxes[j])
-                out << "  GJVariant r" << j << " = {" << std::max(0,scalars[j]) << ",0,{0}};\n";
+                // TinyCC lowers aggregate zero initializers to memset calls.
+                // A nil/scalar Variant only needs its tag and scalar payload;
+                // the remaining union bytes are inactive storage.
+                out << "  GJVariant r" << j << "; r" << j << ".type = " << std::max(0,scalars[j])
+                    << "; r" << j << ".reserved = 0; r" << j << ".data.i = 0;\n";
             if (scalars[j] >= 0)
                 out << "  " << (scalars[j] == 3 ? "double" : "GJInt") << " s" << j << " = 0; (void)s" << j << ";\n";
         }
@@ -580,6 +599,13 @@ struct Emitter {
         for (size_t j = 0; j < p.functions.size(); ++j) function(p.functions[j], j);
         if (p.has_global_init) function(p.global_init, p.functions.size());
         if (p.has_member_init) function(p.member_init, p.functions.size()+1);
+        // Native ScriptInstances resolve the function once, then enter its body
+        // directly. Keep gj_entry for standalone hosts and initializer dispatch.
+        if (!p.functions.empty()) {
+            out << "int (*const gj_functions[])(GJContext*,GJVariant*,const GJVariant *const*,int) = {";
+            for (size_t j = 0; j < p.functions.size(); ++j) out << (j ? "," : "") << "f" << j;
+            out << "};\n";
+        }
         scalars.clear();
         out << "int gj_entry(GJContext *ctx, int function, GJVariant *result, const GJVariant *const *args, int count) {\n"
             << "  if (ctx->failed) return 0;\n  switch (function) {\n";
