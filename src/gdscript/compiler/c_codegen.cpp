@@ -611,7 +611,7 @@ struct Emitter {
 std::string CCodeGenerator::generate(const IRProgram &program, bool debug_info) {
     ir_verify(program);
     // Keep named registers and lexical live ranges intact for inspection.
-    if (debug_info) return Emitter{program, {}, {}, {}, {}, true}.generate();
+    if (debug_info) return Emitter{program, std::ostringstream{}, {}, {}, {}, true}.generate();
     auto optimized = program;
     IROptimizer copies;
     // Use only native-safe local copy propagation, not sandbox ownership,
@@ -637,6 +637,6 @@ std::string CCodeGenerator::generate(const IRProgram &program, bool debug_info) 
     for (auto &f : optimized.functions) prune(f);
     if (optimized.has_global_init) prune(optimized.global_init);
     if (optimized.has_member_init) prune(optimized.member_init);
-    return Emitter{optimized, {}, {}, {}, {}}.generate();
+    return Emitter{optimized, std::ostringstream{}, {}, {}, {}}.generate();
 }
 }
