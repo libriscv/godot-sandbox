@@ -3300,6 +3300,27 @@ void CodeGenerator::gen_for(const ForStmt* stmt, FunctionContext& func) {
 			std::to_string(call_expr->arguments.size()), call_expr);
 	}
 
+	// Keep range operands in one numeric domain.
+	const auto numeric = [&](int reg) {
+		const IRInstruction::TypeHint type = get_register_type(func, reg);
+		return type == Variant::INT || type == Variant::FLOAT;
+	};
+	const bool float_range = numeric(start_reg) && numeric(end_reg) && numeric(step_reg) &&
+		(get_register_type(func, start_reg) == Variant::FLOAT ||
+		 get_register_type(func, end_reg) == Variant::FLOAT ||
+		 get_register_type(func, step_reg) == Variant::FLOAT);
+	if (float_range) {
+		auto promote = [&](int &reg) {
+			if (get_register_type(func, reg) == Variant::INT) {
+				reg = coerce_to_declared_type(reg, Variant::FLOAT, func,
+					"a range() bound", call_expr->line, call_expr->column);
+			}
+		};
+		promote(start_reg);
+		promote(end_reg);
+		promote(step_reg);
+	}
+
 	gen_numeric_for(stmt, start_reg, end_reg, step_reg, func);
 }
 

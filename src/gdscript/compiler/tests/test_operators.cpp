@@ -514,6 +514,24 @@ static void test_integer_iteration_is_guarded_at_run_time() {
 	std::cout << "  ✓ 'for i in n' counts to an untyped integer at run time" << std::endl;
 }
 
+static void test_float_range_promotes_the_implicit_step() {
+	const IRProgram ir = compile_to_ir(
+		"func f(step: float) -> float:\n"
+		"\tvar total := 0.0\n"
+		"\tfor value in range(floor(0.0 / step), floor(1.0 / step) + 1):\n"
+		"\t\ttotal += value\n"
+		"\treturn total\n",
+		false);
+	const IRFunction &fn = find_function(ir, "f");
+	for (const IRInstruction &instruction : fn.instructions) {
+		if (instruction.opcode == IROpcode::CMP_LT || instruction.opcode == IROpcode::ADD) {
+			assert(instruction.type_hint != Variant::INT);
+		}
+	}
+	ir_verify(ir, "float range");
+	std::cout << "  \u2713 float range promotes its implicit step" << std::endl;
+}
+
 // -= Statement layout =-
 
 static void test_semicolon_separates_statements() {
@@ -825,6 +843,7 @@ int main() {
 	test_container_loop_counter_is_typed();
 	test_dictionary_iteration_takes_the_keys();
 	test_integer_iteration_is_guarded_at_run_time();
+	test_float_range_promotes_the_implicit_step();
 
 	test_semicolon_separates_statements();
 	test_explicit_line_continuation();
