@@ -3,7 +3,7 @@
 
 /* Native, trusted-process ABI. Values are real Godot Variants, never handles.
  * Match the engine's precision when compiling a translation unit externally.
- * All value pointers refer to initialized Variants; outputs may alias inputs.
+ * All value pointers refer to initialized Variants. Outputs may alias inputs.
  * The caller owns arguments/results/globals. Functions own and destroy locals.
  */
 typedef signed long long GJInt;
@@ -64,6 +64,87 @@ enum GJOperation {
 #ifdef __cplusplus
 extern "C" {
 #endif
+/* Keep most math function in the engine for platform determinism. */
+#ifdef __cplusplus
+typedef bool GJMathBool;
+#else
+typedef _Bool GJMathBool;
+#endif
+#define GJ_MATH_ARGS_1 double
+#define GJ_MATH_ARGS_2 double, double
+#define GJ_MATH_ARGS_3 double, double, double
+#define GJ_MATH_ARGS_5 double, double, double, double, double
+#define GJ_MATH_ARGS_8 double, double, double, double, double, double, double, double
+#define GJ_ENGINE_MATH(X) \
+    X(SIN, sin, double, 1) \
+    X(COS, cos, double, 1) \
+    X(TAN, tan, double, 1) \
+    X(ASIN, asin, double, 1) \
+    X(ACOS, acos, double, 1) \
+    X(ATAN, atan, double, 1) \
+    X(SINH, sinh, double, 1) \
+    X(COSH, cosh, double, 1) \
+    X(TANH, tanh, double, 1) \
+    X(ASINH, asinh, double, 1) \
+    X(ACOSH, acosh, double, 1) \
+    X(ATANH, atanh, double, 1) \
+    X(EXP, exp, double, 1) \
+    X(LOG, log, double, 1) \
+    X(SQRT, sqrt, double, 1) \
+    X(FLOORF, floorf, double, 1) \
+    X(CEILF, ceilf, double, 1) \
+    X(ROUNDF, roundf, double, 1) \
+    X(ABSF, absf, double, 1) \
+    X(SIGNF, signf, double, 1) \
+    X(DEG_TO_RAD, deg_to_rad, double, 1) \
+    X(RAD_TO_DEG, rad_to_deg, double, 1) \
+    X(LINEAR_TO_DB, linear_to_db, double, 1) \
+    X(DB_TO_LINEAR, db_to_linear, double, 1) \
+    X(ATAN2, atan2, double, 2) \
+    X(POW, pow, double, 2) \
+    X(FMOD, fmod, double, 2) \
+    X(FPOSMOD, fposmod, double, 2) \
+    X(SNAPPEDF, snappedf, double, 2) \
+    X(ANGLE_DIFFERENCE, angle_difference, double, 2) \
+    X(PINGPONG, pingpong, double, 2) \
+    X(EASE, ease, double, 2) \
+    X(LERPF, lerpf, double, 3) \
+    X(INVERSE_LERP, inverse_lerp, double, 3) \
+    X(SMOOTHSTEP, smoothstep, double, 3) \
+    X(MOVE_TOWARD, move_toward, double, 3) \
+    X(LERP_ANGLE, lerp_angle, double, 3) \
+    X(ROTATE_TOWARD, rotate_toward, double, 3) \
+    X(WRAPF, wrapf, double, 3) \
+    X(REMAP, remap, double, 5) \
+    X(CUBIC_INTERPOLATE, cubic_interpolate, double, 5) \
+    X(CUBIC_INTERPOLATE_ANGLE, cubic_interpolate_angle, double, 5) \
+    X(BEZIER_INTERPOLATE, bezier_interpolate, double, 5) \
+    X(BEZIER_DERIVATIVE, bezier_derivative, double, 5) \
+    X(CUBIC_INTERPOLATE_IN_TIME, cubic_interpolate_in_time, double, 8) \
+    X(CUBIC_INTERPOLATE_ANGLE_IN_TIME, cubic_interpolate_angle_in_time, double, 8) \
+    X(IS_NAN, is_nan, GJMathBool, 1) \
+    X(IS_INF, is_inf, GJMathBool, 1) \
+    X(IS_FINITE, is_finite, GJMathBool, 1) \
+    X(IS_ZERO_APPROX, is_zero_approx, GJMathBool, 1) \
+    X(IS_EQUAL_APPROX, is_equal_approx, GJMathBool, 2) \
+    X(FLOORI, floori, GJInt, 1) \
+    X(CEILI, ceili, GJInt, 1) \
+    X(ROUNDI, roundi, GJInt, 1) \
+    X(STEP_DECIMALS, step_decimals, GJInt, 1)
+#define GJ_DECLARE_MATH(id, name, result, count) result gj_math_##name(GJ_MATH_ARGS_##count);
+GJ_ENGINE_MATH(GJ_DECLARE_MATH)
+#undef GJ_DECLARE_MATH
+GJReal gj_sqrt_real(GJReal value);
+/* Godot 4.6+ typed built-in entry points, resolved once by the native host. */
+#define GJ_VECTOR_NORMALIZE(X) \
+    X(2, 5, 2428350749) \
+    X(3, 9, 1776574132) \
+    X(4, 12, 80860099)
+#define GJ_DECLARE_NORMALIZE(n, type, hash) \
+    void gj_vector##n##_normalized(void *self, const void **args, void *result, int count);
+GJ_VECTOR_NORMALIZE(GJ_DECLARE_NORMALIZE)
+#undef GJ_DECLARE_NORMALIZE
+
 void gj_copy(GJVariant *dst, const GJVariant *src);
 void gj_destroy(GJVariant *value);
 int gj_truth(const GJVariant *value);

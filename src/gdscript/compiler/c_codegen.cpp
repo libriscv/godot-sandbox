@@ -1,4 +1,5 @@
 #include "c_codegen.h"
+#include "c_abi.h"
 #include "globals.h"
 #include "ir_verifier.h"
 #include "ir_optimizer.h"
@@ -33,6 +34,28 @@ std::string floating(double d) {
     o << std::scientific << std::setprecision(17) << d;
     return o.str();
 }
+// Only these functions have a direct, numeric engine ABI. Generic Variant
+// utilities still need runtime dispatch (notably vector-valued floor/abs).
+const char *engine_math(GlobalFn fn) {
+    switch (fn) {
+#define GJ_MATH_NAME(id, name, result, count) case GlobalFn::id: return "gj_math_" #name;
+        GJ_ENGINE_MATH(GJ_MATH_NAME)
+#undef GJ_MATH_NAME
+        case GlobalFn::LERP: return "gj_math_lerpf";
+        default: return nullptr;
+    }
+}
+bool inline_math(GlobalFn fn) {
+    switch (fn) {
+        case GlobalFn::ABSI: case GlobalFn::ABSF:
+        case GlobalFn::SIGNI: case GlobalFn::SIGNF:
+        case GlobalFn::MINI: case GlobalFn::MINF:
+        case GlobalFn::MAXI: case GlobalFn::MAXF:
+        case GlobalFn::CLAMPI: case GlobalFn::CLAMPF:
+        case GlobalFn::INT_IDENTITY: return true;
+        default: return false;
+    }
+}
 // Flow-insensitive union of every definition, including loop backedges. Only
 // singleton scalar sets are promoted; entry arguments remain unknown. The IR
 // verifier establishes definite assignment before any read. Do not trust hints
@@ -60,6 +83,12 @@ std::vector<int> scalar_locals(const IRFunction &f) {
                 t = i.operands[1].immediate() >= 1 && i.operands[1].immediate() <= 3 ? 1u << i.operands[1].immediate() : unknown; break;
             case IROpcode::MOVE: t = src(1); break;
             case IROpcode::GLOBAL_CALL:
+                if (engine_math(static_cast<GlobalFn>(i.operands[1].immediate())) ||
+                    inline_math(static_cast<GlobalFn>(i.operands[1].immediate()))) {
+                    auto result = global_function(static_cast<GlobalFn>(i.operands[1].immediate())).result;
+                    t = result == GlobalResult::FLOAT ? 8 : result == GlobalResult::INT ? 4 :
+                        result == GlobalResult::BOOL ? 2 : unknown;
+                }
                 if (static_cast<GlobalFn>(i.operands[1].immediate()) == GlobalFn::TO_FLOAT ||
                     static_cast<GlobalFn>(i.operands[1].immediate()) == GlobalFn::FLOAT_IDENTITY) t = 8;
                 if (static_cast<GlobalFn>(i.operands[1].immediate()) == GlobalFn::TO_INT) t = 4;
@@ -150,25 +179,157 @@ struct Emitter {
     void method(const IRInstruction &i) {
         const auto &a = i.operands;
         const auto d = r(a[0]), x = r(a[1]);
-        const auto &method_name = p.strings[a[2].string_id];
+        const auto &n = p.strings[a[2].string_id];
         const auto av = args(i, 4);
-        if (!i.super_call && method_name == "distance_squared_to" && av.size() == 1) {
-            const auto y = r(a[4]);
-            box("&" + x); box("&" + y);
-            out << "  if (" << x << ".type == 5 && " << y << ".type == 5) {\n"
-                << "    GJReal dx = " << x << ".data.real[0] - " << y << ".data.real[0];\n"
-                << "    GJReal dy = " << x << ".data.real[1] - " << y << ".data.real[1];\n";
-            // Round in engine real precision before boxing as a Variant double.
-            set(d, 3, "(GJReal)(dx * dx + dy * dy)");
+        const bool normalize = n == "normalized" && av.empty();
+        const bool length = (n == "length" || n == "length_squared") && av.empty();
+        const bool distance = (n == "distance_to" || n == "distance_squared_to") && av.size() == 1;
+        const bool dot = n == "dot" && av.size() == 1;
+        if (!i.super_call && (normalize || length || distance || dot)) {
+            box("&" + x);
+            const auto y = av.empty() ? x : r(a[4]);
+            if (!av.empty()) box("&" + y);
+            for (int components = 2; components <= 4; ++components) {
+                const int type = components == 2 ? 5 : components == 3 ? 9 : 12;
+                out << (components == 2 ? "  if (" : "  } else if (") << x << ".type == " << type;
+                if (!av.empty()) out << " && " << y << ".type == " << type;
+                out << ") {\n";
+                if (normalize) {
+                    // TinyCC cannot inline sqrt; one direct engine call beats
+                    // spilling each component around a scalar helper call and
+                    // preserves 4.6+ zero/underflow/nonfinite behavior exactly.
+                    out << "    GJReal normalized[" << components << "];\n"
+                        << "    gj_vector" << components << "_normalized(" << x << ".data.real, 0, normalized, 0);\n";
+                    require_box("&" + d);
+                    out << "    gj_clear(&" << d << "); " << d << ".type = " << type << ";\n";
+                    for (int j = 0; j < components; ++j)
+                        out << "    " << d << ".data.real[" << j << "] = normalized[" << j << "];\n";
+                    continue;
+                }
+                // Snapshot every component before writing a possibly aliased output.
+                for (int j = 0; j < components; ++j) {
+                    out << "    GJReal v" << j << " = " << x << ".data.real[" << j << "]";
+                    if (distance) out << " - " << y << ".data.real[" << j << "]";
+                    out << ";\n";
+                }
+                out << "    GJReal l = ";
+                for (int j = 0; j < components; ++j) {
+                    out << (j ? " + " : "") << "v" << j << " * ";
+                    if (dot) out << y << ".data.real[" << j << "]";
+                    else out << "v" << j;
+                }
+                out << ";\n";
+                if (n == "length" || n == "distance_to") out << "    l = gj_sqrt_real(l);\n";
+                set(d, 3, "l");
+            }
             out << "  } else {\n";
             op("GJ_CALL", "&" + d, "&" + x, name(a[2]), -1, av);
             out << "  }\n";
         } else {
             const char *kind = i.super_call ? "GJ_SUPER_CALL" :
-                method_name == "size" && av.empty() ? "GJ_ARRAY_SIZE" :
-                method_name == "normalized" && av.empty() ? "GJ_VECTOR2_NORMALIZED" : "GJ_CALL";
+                n == "size" && av.empty() ? "GJ_ARRAY_SIZE" : "GJ_CALL";
             op(kind, "&" + d, "&" + x, name(a[2]), -1, av);
         }
+    }
+    void numeric_math(const std::string &d, GlobalFn fn, const std::vector<std::string> &values) {
+        const auto &info = global_function(fn);
+        const int t = info.result == GlobalResult::INT ? 2 : info.result == GlobalResult::BOOL ? 1 : 3;
+        out << "    {\n";
+        // Force the same input precision as Godot before arithmetic; locals also
+        // make selection expressions safe when the destination aliases an input.
+        for (size_t j = 0; j < values.size(); ++j)
+            out << "      " << (t == 2 && info.kind == GlobalKind::INT_OP ? "GJInt" : "double")
+                << " m" << j << " = " << values[j] << ";\n";
+        std::string expression;
+        switch (fn) {
+        case GlobalFn::INT_IDENTITY: expression = "m0"; break;
+        case GlobalFn::ABSI: expression = "m0 < 0 ? (GJInt)(0ULL - (GJUInt)m0) : m0"; break;
+        case GlobalFn::ABSF:
+            // Clear the sign bit, including negative zero and signed NaNs.
+            out << "      union { double f; GJUInt u; } bits; bits.f = m0; bits.u &= 0x7fffffffffffffffULL;\n";
+            expression = "bits.f"; break;
+        case GlobalFn::SIGNI: case GlobalFn::SIGNF: expression = "m0 < 0 ? -1 : m0 > 0 ? 1 : 0"; break;
+        case GlobalFn::MINI: case GlobalFn::MINF: expression = "m0 < m1 ? m0 : m1"; break;
+        case GlobalFn::MAXI: case GlobalFn::MAXF: expression = "m0 > m1 ? m0 : m1"; break;
+        case GlobalFn::CLAMPI: case GlobalFn::CLAMPF: expression = "m0 < m1 ? m1 : m0 > m2 ? m2 : m0"; break;
+        default:
+            expression = std::string(engine_math(fn)) + "(";
+            for (size_t j = 0; j < values.size(); ++j) expression += (j ? ",m" : "m") + std::to_string(j);
+            expression += ")";
+        }
+        set(d, t, expression);
+        out << "    }\n";
+    }
+    bool math(const IRInstruction &i) {
+        const auto &a = i.operands;
+        const auto fn = static_cast<GlobalFn>(a[1].immediate());
+        const auto &info = global_function(fn);
+        const bool generic = info.kind == GlobalKind::NUMERIC;
+        // Generic clamp performs two Variant comparisons (also with reversed
+        // bounds), and preserves the chosen operand's type. Keep its engine ABI.
+        if (fn == GlobalFn::CLAMP) return false;
+        auto supported = [](GlobalFn f) { return inline_math(f) || engine_math(f); };
+        if (generic ? !supported(info.int_form) || !supported(info.float_form) : !supported(fn)) return false;
+        if (a.size() - 4 < info.min_args || a.size() - 4 > info.max_args) return false;
+        // Variadic min/max are normally lowered pairwise by the frontend.
+        if (generic && a.size() > 6) return false;
+        std::string numbers, ints;
+        std::vector<std::string> floats, integers;
+        bool all_numbers = true, all_ints = true;
+        for (size_t j = 4; j < a.size(); ++j) {
+            auto x = r(a[j]); const int t = scalar(x);
+            if (t < 2) {
+                box("&" + x);
+                numbers += (numbers.empty() ? "" : " && ") + std::string("(") + x + ".type == 2 || " + x + ".type == 3)";
+                all_numbers = false;
+            }
+            if (t != 2) {
+                if (t < 0) ints += (ints.empty() ? "" : " && ") + x + ".type == 2";
+                else ints += (ints.empty() ? "" : " && ") + std::string("0");
+                all_ints = false;
+            }
+            floats.push_back(t >= 2 ? payload(x,t) : "gj_number(&" + x + ")");
+            integers.push_back(t >= 2 ? payload(x,t) : x + ".data.i");
+        }
+        // Typed integer primitives accept only integer fast-path inputs. Float
+        // conversion, bools, and other Variant coercions retain host semantics.
+        const bool integer_only = !generic && info.kind == GlobalKind::INT_OP;
+        const bool guarded = integer_only ? !all_ints : !all_numbers;
+        if (guarded) out << "  if (" << (integer_only ? ints : numbers) << ") {\n";
+        if (fn == GlobalFn::MIN || fn == GlobalFn::MAX) {
+            // Generic selection keeps the first operand on ties/NaNs, and
+            // returns the selected Variant's original type even for mixed pairs.
+            auto select = [&](bool integer) {
+                const auto &v = integer ? integers : floats;
+                auto cast = [&](const std::string &x) { return integer ? x : "(double)(" + x + ")"; };
+                out << "    if (" << cast(v[0]) << (fn == GlobalFn::MIN ? " > " : " < ") << cast(v[1]) << ") {\n";
+                move(r(a[0]), r(a[5]));
+                out << "    } else {\n";
+                move(r(a[0]), r(a[4]));
+                out << "    }\n";
+            };
+            if (!all_ints) out << "    if (" << ints << ") {\n";
+            select(true);
+            if (!all_ints) {
+                out << "    } else {\n";
+                select(false);
+                out << "    }\n";
+            }
+        } else if (generic) {
+            if (!all_ints) out << "    if (" << ints << ") {\n";
+            numeric_math(r(a[0]),info.int_form,integers);
+            if (!all_ints) {
+                out << "    } else {\n";
+                numeric_math(r(a[0]),info.float_form,floats);
+                out << "    }\n";
+            }
+        } else numeric_math(r(a[0]),fn,integer_only ? integers : floats);
+        if (guarded) {
+            out << "  } else {\n";
+            op("GJ_UTILITY", "&" + r(a[0]), "0", quote(info.name), int(fn), args(i,4));
+            out << "  }\n";
+        }
+        return true;
     }
     std::vector<std::string> args(const IRInstruction &i, size_t start) {
         std::vector<std::string> a;
@@ -507,6 +668,7 @@ struct Emitter {
                 break;
             }
             case IROpcode::GLOBAL_CALL:
+                if (math(i)) break;
                 if (a.size() == 5 && static_cast<GlobalFn>(a[1].immediate()) == GlobalFn::TO_INT) {
                     box(reg(4));
                     out << "  if (" << r(a[4]) << ".type == 2) {\n";
