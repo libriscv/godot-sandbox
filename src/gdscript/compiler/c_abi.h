@@ -21,9 +21,13 @@ typedef struct GJVariant {
         double f;
         unsigned char b;
         GJReal real[4];
+        int integer[4];
+        float color[4];
 #ifdef DOUBLE_PRECISION_REAL_T
+        GJUInt words[4];
         unsigned char bytes[32];
 #else
+        GJUInt words[2];
         unsigned char bytes[16];
 #endif
     } data;
@@ -58,7 +62,7 @@ enum GJOperation {
     GJ_GET_NAMED, GJ_SET_NAMED, GJ_ARRAY, GJ_DICTIONARY, GJ_PACKED_ARRAY,
     GJ_UTILITY, GJ_PRINT, GJ_LOAD, GJ_GET_OBJECT, GJ_NEW_OBJECT, GJ_GET_NODE,
     GJ_CALLABLE, GJ_DICTIONARY_HAS, GJ_STRUCT_CHECK, GJ_SUPER_CALL, GJ_CLASS_BIND, GJ_TRAIT_TEST,
-    GJ_ARRAY_SIZE, GJ_VECTOR2_NORMALIZED
+    GJ_ARRAY_SIZE, GJ_VECTOR2_NORMALIZED, GJ_COERCE
 };
 
 #ifdef __cplusplus
@@ -150,15 +154,18 @@ void gj_destroy(GJVariant *value);
 int gj_truth(const GJVariant *value);
 /* Returns zero on failure, records a diagnostic; no C++ exception crosses C.
  * args is an ordinary native array of pointers to ordinary native Variants.
- * name is UTF-8; STRING uses detail as its byte length (embedded NUL supported).
+ * name_id indexes the module gj_names table; -1 means absent. STRING uses
+ * detail as its byte length (embedded NUL supported).
  * detail selects an operator/type/print channel, or -1 for a generic operation.
  */
 int gj_op(GJContext *ctx, int operation, GJVariant *dst, GJVariant *self,
-          const char *name, int detail, const GJVariant *const *args, int count);
+          int name_id, int detail, const GJVariant *const *args, int count);
 int gj_fail(GJContext *ctx, const char *message);
 /* Checked loop step: 1 publishes an item, 0 ends iteration, -1 fails.
  * Rechecks the current size each time, so mutations remain visible. */
 int gj_array_next(GJContext *ctx, GJVariant *item, GJVariant *array, GJInt index);
+/* Proven Array, typed inline vector destination. Rechecks size each step. */
+int gj_array_next_vector(GJContext *, GJReal *item, GJVariant *array, GJInt index, int type);
 /* Await returns 1 on suspension, 0 immediately, -1 on failure. Restore
  * returns the instruction to resume, or -1 on failure. Slots are owned locals. */
 int gj_await(GJContext *, void *resuming, int function, int instruction,
@@ -191,6 +198,10 @@ typedef int (*GJEntry)(GJContext *, int function, GJVariant *result,
 } while (0)
 #define gj_move(d, s) do { \
     if (gj_trivial((d)->type) && gj_trivial((s)->type)) *(d) = *(s); else gj_copy(d, s); \
+} while (0)
+/* Transfer only an owned value proven dead on every successor edge. */
+#define gj_take(d, s) do { \
+    if ((d) != (s)) { gj_clear(d); *(d) = *(s); (s)->type = 0; (s)->data.i = 0; } \
 } while (0)
 #define gj_number(v) ((v)->type == 3 ? (v)->data.f : \
     (v)->type == 1 ? (double)(v)->data.b : (double)(v)->data.i)

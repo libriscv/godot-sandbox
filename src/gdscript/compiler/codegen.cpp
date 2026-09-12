@@ -10514,9 +10514,10 @@ int CodeGenerator::coerce_to_declared_type(int reg, IRInstruction::TypeHint decl
 		return reg;
 	}
 	if (actual == IRInstruction::TypeHint_NONE) {
-		// Match GDScript's OPCODE_ASSIGN_TYPED_BUILTIN for declared scalars.
+		// Native type proving also needs checked assignments of builtin values.
+		// Object/Dictionary hints can represent nominal script classes.
 		if (declared != Variant::INT && declared != Variant::FLOAT &&
-			declared != Variant::BOOL) {
+			declared != Variant::BOOL && (!m_native_classes || declared == Variant::OBJECT || declared == Variant::DICTIONARY)) {
 			return reg;
 		}
 		const int converted = alloc_register(func);
