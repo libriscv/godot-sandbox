@@ -1029,8 +1029,13 @@ void CodeGenerator::gen_var_decl(const VarDeclStmt* stmt, FunctionContext& func,
 
 	const bool untyped_null = accepted_type.empty() && stmt->initializer != nullptr &&
 		get_register_type(func, reg) == Variant::NIL;
+	const bool class_typed_null = !accepted_type.empty() && !accepted_type.is_union() &&
+		accepted_type.single_name() != "Variant" &&
+		single_type_from(accepted_type) == IRInstruction::TypeHint_NONE &&
+		get_register_type(func, reg) == Variant::NIL;
 
-	const bool declared_variant = accepted_type.single_name() == "Variant" || untyped_null;
+	const bool declared_variant = accepted_type.single_name() == "Variant" || untyped_null ||
+		class_typed_null;
 	if (declared_variant) {
 		// Fresh register: clearing type on the initializer's would reach other uses.
 		int untyped_reg = alloc_register(func);

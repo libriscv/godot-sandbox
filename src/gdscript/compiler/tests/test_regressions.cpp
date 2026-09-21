@@ -997,6 +997,33 @@ func continue_after(items: Array) -> int:
 	}
 }
 
+static void test_class_typed_local_that_starts_null() {
+	const std::string source = R"(
+func test(value):
+	var n: Node3D = null
+	n = value
+	var five: int = 5
+	return n == five
+
+func without_initializer(value):
+	var n: Node3D
+	n = value
+	var five: int = 5
+	return n != five
+
+func still_null():
+	var n: Node3D = null
+	return n == null
+)";
+	assert(run_int(source, "test", { int64_t(5) }) == 1);
+	assert(run_int(source, "test", { int64_t(4) }) == 0);
+	assert(run_int(source, "without_initializer", { int64_t(5) }) == 0);
+	assert(run_int(source, "still_null") == 1);
+
+	assert(!rejects("func test(o: Node3D):\n\tvar n: Node3D = null\n\tn = o\n\treturn n\n"));
+	assert(!rejects("func test():\n\tvar n: Node3D = null\n\tn = self\n\treturn n\n"));
+}
+
 int main() {
 	std::cout << "=== Compiler Regression Tests ===" << std::endl << std::endl;
 
@@ -1019,6 +1046,7 @@ int main() {
 	test_typed_entry_survives_unused_parameters();
 	test_vector_int_float_conversion();
 	test_break_after_a_nested_batched_loop();
+	test_class_typed_local_that_starts_null();
 
 	std::cout << std::endl << "All regression tests passed!" << std::endl;
 	return 0;
