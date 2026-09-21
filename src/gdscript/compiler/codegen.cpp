@@ -788,6 +788,34 @@ IRProgram CodeGenerator::generate(const Program& program) {
 			ir_program.signatures.push_back(std::move(signature));
 			ir_program.functions.push_back(generate_function(method, &decl));
 		}
+		if (m_native_classes && decl.is_class) {
+			// Script resources need the same construction path as local Class.new().
+			const FunctionDecl* init = find_class_method(decl, "_init");
+			FunctionDecl factory;
+			factory.name = lifted_method_name(decl, "@new");
+			factory.is_static = true;
+			factory.line = decl.line;
+			std::vector<ExprPtr> arguments;
+			if (init != nullptr) {
+				for (const auto& param : init->parameters) {
+					Parameter forwarded;
+					forwarded.name = param.name;
+					forwarded.type_hint = param.type_hint;
+					factory.parameters.push_back(std::move(forwarded));
+					arguments.push_back(std::make_unique<VariableExpr>(param.name));
+				}
+			}
+			factory.body.push_back(std::make_unique<ReturnStmt>(
+				std::make_unique<MemberCallExpr>(std::make_unique<VariableExpr>(decl.name),
+					"new", std::move(arguments), true)));
+			FunctionSignature signature = init != nullptr ? build_signature(*init) : FunctionSignature();
+			signature.name = factory.name;
+			signature.is_static = true;
+			signature.return_type = Variant::OBJECT;
+			signature.return_class_name = decl.name;
+			ir_program.signatures.push_back(std::move(signature));
+			ir_program.functions.push_back(generate_function(factory));
+		}
 		const std::string* engine_base = native_base(decl);
 		// Plain nested classes are guest-only and have no Script resource for the
 		// host to attach. Structs are the exception: their signature is editor
@@ -5417,28 +5445,22 @@ int CodeGenerator::gen_binary(const BinaryExpr* expr, FunctionContext& func) {
 		}
 	}
 
-	// Equality with null is a tag test. Besides avoiding a host Variant
-	// evaluation, this folds immediately in a narrowed branch.
+	// Object Variants can hold a null pointer without carrying the NIL tag.
+	// Only proven non-object values can fold by tag.
 	if ((expr->op == BinaryExpr::Op::EQ || expr->op == BinaryExpr::Op::NEQ) &&
 		(left_type == Variant::NIL || right_type == Variant::NIL)) {
 		const int value_reg = left_type == Variant::NIL ? right_reg : left_reg;
 		const IRInstruction::TypeHint value_type = get_register_type(func, value_reg);
-		if (value_type != IRInstruction::TypeHint_NONE) {
+		const StructDecl* value_class = get_register_struct(func, value_reg);
+		if (value_type == IRInstruction::TypeHint_NONE || value_type == Variant::OBJECT ||
+			(m_native_classes && value_class != nullptr && value_class->is_class)) {
+			func.ir.instructions.emplace_back(expr->op == BinaryExpr::Op::EQ
+				? IROpcode::CMP_EQ : IROpcode::CMP_NEQ, IRValue::reg(result_reg),
+				IRValue::reg(left_reg), IRValue::reg(right_reg));
+		} else {
 			const bool equal = value_type == Variant::NIL;
 			func.ir.instructions.emplace_back(IROpcode::LOAD_BOOL, IRValue::reg(result_reg),
 				IRValue::imm((expr->op == BinaryExpr::Op::EQ) == equal ? 1 : 0));
-		} else if (expr->op == BinaryExpr::Op::EQ) {
-			func.ir.instructions.emplace_back(IROpcode::TYPE_TEST, IRValue::reg(result_reg),
-				IRValue::reg(value_reg), IRValue::imm(static_cast<int64_t>(Variant::NIL)));
-		} else {
-			const int is_nil = alloc_register(func);
-			func.ir.instructions.emplace_back(IROpcode::TYPE_TEST, IRValue::reg(is_nil),
-				IRValue::reg(value_reg), IRValue::imm(static_cast<int64_t>(Variant::NIL)));
-			set_register_type(func, is_nil, Variant::BOOL);
-			IRInstruction negate(IROpcode::NOT, IRValue::reg(result_reg), IRValue::reg(is_nil));
-			negate.type_hint = Variant::BOOL;
-			func.ir.instructions.push_back(negate);
-			free_register(func, is_nil);
 		}
 		set_register_type(func, result_reg, Variant::BOOL);
 		free_register(func, left_reg);
