@@ -938,6 +938,65 @@ static void test_vector_int_float_conversion() {
 	std::cout << "  \u2713 Vector and rect int/float conversion" << std::endl;
 }
 
+static void assert_labels_defined(const IRFunction& func) {
+	std::vector<uint32_t> defined;
+	for (const auto& instr : func.instructions) {
+		if (instr.opcode == IROpcode::LABEL) {
+			defined.push_back(instr.operands[0].string_id);
+		}
+	}
+	for (const auto& instr : func.instructions) {
+		if (instr.opcode == IROpcode::LABEL) {
+			continue;
+		}
+		for (const auto& operand : instr.operands) {
+			if (operand.type == IRValue::Type::LABEL) {
+				assert(std::find(defined.begin(), defined.end(), operand.string_id) != defined.end());
+			}
+		}
+	}
+}
+
+static void test_break_after_a_nested_batched_loop() {
+	const std::string source = R"(
+func over_arrays(items: Array) -> int:
+	var n: int = 0
+	for a in items:
+		if a == 1:
+			for b in items:
+				n += 1
+			if n != 0:
+				break
+	return n
+
+func over_strings(text: String) -> int:
+	var n: int = 0
+	for a in text:
+		for b in text:
+			n += 1
+		if n > 2:
+			break
+	return n
+
+func continue_after(items: Array) -> int:
+	var n: int = 0
+	for a in items:
+		for b in items:
+			n += 1
+		if n > 100:
+			continue
+		n += 1
+	return n
+)";
+
+	for (bool optimize : { false, true }) {
+		IRProgram ir = compile_to_ir(source, optimize);
+		assert_labels_defined(find_function(ir, "over_arrays"));
+		assert_labels_defined(find_function(ir, "over_strings"));
+		assert_labels_defined(find_function(ir, "continue_after"));
+	}
+}
+
 int main() {
 	std::cout << "=== Compiler Regression Tests ===" << std::endl << std::endl;
 
@@ -959,6 +1018,7 @@ int main() {
 	test_licm_leaves_conditional_definitions_alone();
 	test_typed_entry_survives_unused_parameters();
 	test_vector_int_float_conversion();
+	test_break_after_a_nested_batched_loop();
 
 	std::cout << std::endl << "All regression tests passed!" << std::endl;
 	return 0;

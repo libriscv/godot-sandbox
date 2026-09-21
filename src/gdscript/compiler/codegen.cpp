@@ -3011,6 +3011,8 @@ void CodeGenerator::gen_for(const ForStmt* stmt, FunctionContext& func) {
 				IRValue::reg(array_reg));
 			set_register_type(func, snapshot_reg, Variant::STRING);
 			if (m_batch_iteration && !func.ir.is_coroutine) {
+				pop_scope(func);
+				func.loops.pop_back();
 				gen_string_walk(stmt, snapshot_reg, func);
 				return;
 			}
@@ -3019,6 +3021,8 @@ void CodeGenerator::gen_for(const ForStmt* stmt, FunctionContext& func) {
 			array_reg = snapshot_reg;
 		}
 		if (m_batch_iteration && get_register_type(func, array_reg) == Variant::ARRAY) {
+			pop_scope(func);
+			func.loops.pop_back();
 			gen_array_walk(stmt, array_reg, func, iterable_element, iterable_trait);
 			return;
 		}
