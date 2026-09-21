@@ -54,6 +54,45 @@ int main() try {
 	check(std::get<int64_t>(inherited.call("answer")) == 42, "Frontend skipped base merging");
 	options.restricted = true;
 	check(!compiler.compile_to_ir("extends Base\n", options), "Frontend skipped restricted policy");
+	for (bool optimize : {false, true}) {
+		CompilerOptions editor;
+		editor.native_classes = true;
+		editor.optimize = optimize;
+		auto compiled = compiler.compile_to_ir(
+			"extends RefCounted\n"
+			"var names: PackedStringArray = []\n"
+			"var optional: PackedStringArray? = []\n"
+			"class Row extends RefCounted:\n"
+			"\tconst Data = preload(\"res://data.ugd\")\n"
+			"\tsignal clicked(index: int)\n"
+			"\tfunc trigger(index: int):\n\t\tclicked.emit(index)\n"
+			"func axis():\n\treturn Vector3.AXIS_Z + Vector4i.AXIS_W\n", editor);
+		check(compiled.has_value(), compiler.get_error());
+		ir_verify(*compiled);
+		auto axis_ir = compiler.compile_to_ir("func axis():\n\treturn Vector3.AXIS_Z + Vector4i.AXIS_W\n", editor);
+		check(axis_ir.has_value(), compiler.get_error());
+		IRInterpreter axes(*axis_ir);
+		check(std::get<int64_t>(axes.call("axis")) == 5, "Builtin integer constants changed values");
+		check(compiled->has_member_init && compiled->has_global_init,
+			"Packed members and nested preloads need their respective initializers");
+		check(compiled->class_signatures.size() == 1 &&
+			compiled->class_signatures[0].signals.size() == 1,
+			"Nested class signal metadata missing");
+		auto encoded = encode_class_signatures(compiled->class_signatures);
+		std::vector<ClassSignature> decoded;
+		check(decode_class_signatures(encoded.data(), encoded.size(), decoded), "Class metadata round trip");
+		check(decoded.size() == 1 && decoded[0].signals.size() == 1 &&
+			decoded[0].signals[0].name == "clicked" &&
+			decoded[0].signals[0].parameters[0].type == Variant::INT,
+			"Class metadata lost its signal signature");
+		check(!decode_class_signatures(encoded.data(), encoded.size() - 1, decoded) && decoded.empty(),
+			"Truncated class signal metadata accepted");
+		check(!compiler.compile_to_ir("class Row:\n\tsignal hit\n\tvar hit = 1\n", editor),
+			"Nested signal and field collision accepted");
+		check(!compiler.compile_to_ir("class Row:\n\tsignal hit\n\tsignal hit\n", editor),
+			"Duplicate nested signal accepted");
+	}
+
 	std::cout << "Standalone frontend tests passed\n";
 	return 0;
 } catch (const std::exception& error) {

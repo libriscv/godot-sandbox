@@ -494,6 +494,7 @@ struct StructDecl {
 	std::vector<FunctionDecl> methods;
 	// `const` in a class body: compile-time only, like the file's own consts.
 	std::vector<StructField> constants;
+	std::vector<SignalDecl> signals;
 	size_t inherited_fields = 0;
 
 	const StructField* find_constant(const std::string& constant_name) const {

@@ -11,6 +11,9 @@
 #include <cmath>
 
 namespace gdscript {
+namespace {
+const char* packed_array_constructor_name(IRInstruction::TypeHint type);
+}
 
 void CodeGenerator::set_engine_ancestry(
 	const std::vector<std::pair<std::string, std::string>>& pairs) {
@@ -366,6 +369,21 @@ IRProgram CodeGenerator::generate(const Program& program) {
 		}
 	}
 	for (const StructDecl& structure : program.structs) {
+		if (!m_native_classes && !structure.signals.empty()) {
+			error_at("Nested class signals require native class support",
+				structure.signals.front().line, structure.signals.front().column);
+		}
+		std::unordered_set<std::string> signal_names;
+		for (const SignalDecl& signal : structure.signals) {
+			if (!signal_names.insert(signal.name).second || structure.find_field(signal.name) ||
+				structure.find_constant(signal.name) || structure.find_method(signal.name)) {
+				error_at("Signal '" + signal.name + "' has a name that is already taken",
+					signal.line, signal.column);
+			}
+			for (const Parameter& parameter : signal.parameters) {
+				type_set_from(parameter.type_hint, parameter.line, parameter.column);
+			}
+		}
 		for (const StructField& field : structure.fields) {
 			type_set_from(field.type_hint, field.line, field.column);
 		}
@@ -616,7 +634,15 @@ IRProgram CodeGenerator::generate(const Program& program) {
 		}
 
 		{
-			if (fold_global_initializer(global.initializer.get(), ir_global)) {
+			bool folded = fold_global_initializer(global.initializer.get(), ir_global);
+			// Empty Array literals need the same packed-array conversion as nonempty ones.
+			const auto declared = global.type_hint.nullable
+				? Variant::type_from_name(global.type_hint.sole_name()) : m_global_types[i];
+			if (folded && ir_global.init_type == IRGlobalVar::InitType::EMPTY_ARRAY &&
+				packed_array_constructor_name(declared) != nullptr) {
+				folded = false;
+			}
+			if (folded) {
 				if (m_global_traits[i] != nullptr &&
 					!(global.type_hint.nullable &&
 						ir_global.init_type == IRGlobalVar::InitType::NULL_VAL)) {
@@ -698,6 +724,9 @@ IRProgram CodeGenerator::generate(const Program& program) {
 	}
 
 	m_current_chain_link = 0;
+	m_globals_lowered = SIZE_MAX;
+	// Class preloads share the script's static lifetime and initialize before use.
+	register_class_constants(program, ir_program, init_func);
 	if (ir_program.has_global_init) {
 		init_func.ir.instructions.emplace_back(IROpcode::RETURN);
 		init_func.ir.max_registers = init_func.next_register;
@@ -717,11 +746,6 @@ IRProgram CodeGenerator::generate(const Program& program) {
 	m_members_in_scope = true;
 	ir_program.global_init = std::move(init_func.ir);
 	ir_program.member_init = std::move(member_func.ir);
-
-	m_globals_lowered = SIZE_MAX;
-
-	// After the globals, so a class constant may be written in terms of one.
-	register_class_constants(program);
 
 	m_pending_lambdas.clear();
 	m_next_lambda = 0;
@@ -7819,12 +7843,36 @@ const FunctionDecl* CodeGenerator::find_class_method(const StructDecl& decl,
 	return nullptr;
 }
 
-// A class constant is compile-time only, like the file's own consts: it folds at
-// the use site and nothing of it reaches the IR. Keyed under 'Class.NAME', which
-// no source-level name can spell.
-void CodeGenerator::register_class_constants(const Program& program) {
+// Scalar class constants fold at use; preloaded resources live in shared storage.
+void CodeGenerator::register_class_constants(const Program& program, IRProgram& ir,
+	FunctionContext& init) {
+	m_class_constants.clear();
+	m_class_preloads.clear();
 	for (const StructDecl& decl : program.structs) {
 		for (const StructField& constant : decl.constants) {
+			if (const auto* call = dynamic_cast<const CallExpr*>(constant.default_value.get());
+				call != nullptr && call->function_name == "preload" && call->arguments.size() == 1) {
+				IRGlobalVar path;
+				if (fold_global_initializer(call->arguments[0].get(), path, nullptr, &decl) &&
+					path.init_type == IRGlobalVar::InitType::STRING) {
+					const int value = gen_load_resource(std::get<std::string>(path.init_value), init);
+					IRGlobalVar resource;
+					resource.name = decl.name + "." + constant.name;
+					resource.is_const = true;
+					resource.type_hint = Variant::OBJECT;
+					resource.value_type = Variant::OBJECT;
+					resource.holds_object = true;
+					resource.init_type = IRGlobalVar::InitType::RUNTIME;
+					const size_t index = ir.globals.size();
+					m_class_preloads[resource.name] = index;
+					ir.globals.push_back(std::move(resource));
+					init.ir.instructions.emplace_back(IROpcode::STORE_GLOBAL,
+						IRValue::imm(static_cast<int64_t>(index)), IRValue::reg(value));
+					free_register(init, value);
+					ir.has_global_init = true;
+					continue;
+				}
+			}
 			IRGlobalVar folded;
 			folded.name = decl.name + "." + constant.name;
 			folded.is_const = true;
@@ -7851,6 +7899,16 @@ int CodeGenerator::gen_class_constant(const StructDecl& decl, const std::string&
 	FunctionContext& func)
 {
 	for (const StructDecl* at = &decl; at != nullptr; at = class_base(*at)) {
+		const auto preload = m_class_preloads.find(at->name + "." + name);
+		if (preload != m_class_preloads.end()) {
+			const int result = alloc_register(func);
+			IRInstruction load(IROpcode::LOAD_GLOBAL, IRValue::reg(result),
+				IRValue::imm(static_cast<int64_t>(preload->second)));
+			load.type_hint = Variant::OBJECT;
+			func.ir.instructions.push_back(load);
+			set_register_type(func, result, Variant::OBJECT);
+			return result;
+		}
 		auto it = m_class_constants.find(at->name + "." + name);
 		if (it != m_class_constants.end()) {
 			return gen_folded_const(it->second, func);
@@ -7980,6 +8038,14 @@ const TraitDecl* CodeGenerator::get_register_trait(const FunctionContext& func,
 }
 
 const SignalDecl* CodeGenerator::find_signal(const std::string& name) const {
+	if (m_current_class != nullptr) {
+		for (const StructDecl* at = m_current_class; at != nullptr; at = class_base(*at)) {
+			for (const SignalDecl& signal : at->signals) {
+				if (signal.name == name) return &signal;
+			}
+		}
+		return nullptr;
+	}
 	auto it = m_signals.find(name);
 	return it == m_signals.end() ? nullptr : it->second;
 }
@@ -8018,7 +8084,14 @@ FunctionSignature CodeGenerator::build_signal_signature(const SignalDecl& decl) 
 int CodeGenerator::gen_signal_value(const std::string& name, FunctionContext& func,
 	const Expr* site)
 {
-	int self_reg = gen_get_node(".", func);
+	int self_reg;
+	if (m_current_class != nullptr) {
+		Variable* self = find_variable(func, "self");
+		if (self == nullptr) error_at("Cannot use an instance signal from a static function", site);
+		self_reg = gen_native_base_load(self->register_num, func);
+	} else {
+		self_reg = gen_get_node(".", func);
+	}
 	int result_reg = gen_member_read(self_reg, name, func, site);
 	free_register(func, self_reg);
 	set_register_type(func, result_reg, Variant::SIGNAL);
@@ -8076,7 +8149,14 @@ const char* CodeGenerator::signal_owner_method(const std::string& member) {
 int CodeGenerator::gen_signal_owner_call(const std::string& signal_name,
 	const char* owner_method, const MemberCallExpr* expr, FunctionContext& func)
 {
-	int self_reg = gen_get_node(".", func);
+	int self_reg;
+	if (m_current_class != nullptr) {
+		Variable* self = find_variable(func, "self");
+		if (self == nullptr) error_at("Cannot use an instance signal from a static function", expr);
+		self_reg = gen_native_base_load(self->register_num, func);
+	} else {
+		self_reg = gen_get_node(".", func);
+	}
 
 	int name_reg = alloc_register(func);
 	IRInstruction load_name(IROpcode::LOAD_STRING, IRValue::reg(name_reg),
@@ -8211,6 +8291,9 @@ ClassSignature CodeGenerator::build_class_signature(const StructDecl& decl,
 	}
 	for (const FunctionDecl& method : decl.methods) {
 		out.methods.push_back(ClassMethod{ method.name, method.is_static });
+	}
+	for (const SignalDecl& signal : decl.signals) {
+		out.signals.push_back(build_signal_signature(signal));
 	}
 	return out;
 }
@@ -9599,6 +9682,9 @@ bool CodeGenerator::inline_member_accepts(IRInstruction::TypeHint obj_type,
 int CodeGenerator::gen_builtin_constant(const std::string& type, const std::string& name,
 	FunctionContext& func)
 {
+	if (const auto* integer = find_builtin_integer_constant(type, name)) {
+		return gen_int_immediate(integer->value, func);
+	}
 	const InlineConstructor* info = find_inline_constructor(type);
 	const BuiltinConstant* constant = find_builtin_constant(type, name);
 	if (info != nullptr && constant != nullptr) {

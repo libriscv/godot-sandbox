@@ -819,6 +819,12 @@ StructDecl Parser::parse_class() {
 			continue;
 		}
 
+		if (check(TokenType::SIGNAL)) {
+			if (is_static) error("A signal cannot be static");
+			decl.signals.push_back(parse_signal());
+			continue;
+		}
+
 		const Token& var_token = consume(TokenType::VAR,
 			"A class body holds constant, field and function declarations");
 		if (is_static) {
@@ -1758,7 +1764,7 @@ MatchPatternPtr Parser::parse_match_dictionary_pattern() {
 StmtPtr Parser::parse_return_stmt() {
 	ExprPtr value = nullptr;
 
-	if (!check(TokenType::NEWLINE)) {
+	if (!at_inline_suite_end() && !check(TokenType::SEMICOLON)) {
 		value = parse_expression();
 	}
 
@@ -1964,7 +1970,8 @@ ExprPtr Parser::parse_expression_impl() {
 ExprPtr Parser::parse_ternary() {
 	ExprPtr true_value = parse_coalesce();
 
-	if (!match(TokenType::IF)) {
+	// A block lambda consumed its final newline before the dedent.
+	if (previous().type == TokenType::DEDENT || !match(TokenType::IF)) {
 		return true_value;
 	}
 

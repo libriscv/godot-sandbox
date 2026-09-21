@@ -29,9 +29,8 @@ def class_enums(api: dict[str, object]) -> str:
 			rows.append((cls["name"], enum["name"]))
 	rows.sort()
 	lines = [
-		"// Engine class enumeration names.",
-		f"// Generated from extension_api.json, Godot {version_name(api)}; do not edit.",
-		"// Requires GDSC_CLASS_ENUM defined before inclusion.",
+		f"// Generated from extension_api.json, Godot {version_name(api)}",
+		"// Requires GDSC_CLASS_ENUM defined before inclusion",
 		"",
 		"#ifndef GDSC_CLASS_ENUM",
 		"#define GDSC_CLASS_ENUM(class_name, enum_name)",
@@ -46,6 +45,22 @@ def class_enums(api: dict[str, object]) -> str:
 			lines.append(f"// {class_name}")
 			current = class_name
 		lines.append(f"GDSC_CLASS_ENUM({class_name}, {enum_name})")
+	return "\n".join(lines) + "\n"
+
+
+def builtin_integer_constants(api: dict[str, object]) -> str:
+	rows = []
+	for builtin in api["builtin_classes"]:
+		for enum in builtin.get("enums", []):
+			for value in enum["values"]:
+				rows.append((builtin["name"], value["name"], value["value"]))
+	lines = [
+		f"// Generated from extension_api.json, Godot {version_name(api)}",
+		"// Requires GDSC_BUILTIN_INT_CONSTANT defined before inclusion",
+		"",
+	]
+	for type_name, name, value in sorted(rows):
+		lines.append(f"GDSC_BUILTIN_INT_CONSTANT({type_name}, {name}, {value})")
 	return "\n".join(lines) + "\n"
 
 
@@ -70,10 +85,8 @@ def host_constants(api: dict[str, object]) -> str:
 			rows.append((type_name, constant["name"], values))
 	rows.sort()
 	lines = [
-		"// Built-in constants whose values need Godot's Variant constructor.",
-		f"// Generated from extension_api.json, Godot {version_name(api)}; do not edit.",
-		"// Values are the flattened constructor components, padded to sixteen.",
-		"// Requires GDSC_HOST_CONSTANT defined before inclusion.",
+		f"// Generated from extension_api.json, Godot {version_name(api)}",
+		"// Requires GDSC_HOST_CONSTANT defined before inclusion",
 		"",
 		"#ifndef GDSC_HOST_CONSTANT",
 		"#define GDSC_HOST_CONSTANT(type, name, count, c0, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13, c14, c15)",
@@ -240,8 +253,7 @@ def variant_api_json(api: dict[str, object]) -> str:
 	document = {
 		"godot": version_name(api),
 		"comment": (
-			"Generated from extension_api.json by scripts/generate_api_tables.py; "
-			"do not edit."
+			"Generated from extension_api.json by scripts/generate_api_tables.py"
 		),
 		"scalars": FUZZ_SCALARS,
 		"samples": FUZZ_SAMPLES,
@@ -254,8 +266,8 @@ def variant_api_json(api: dict[str, object]) -> str:
 def variant_api_def(api: dict[str, object]) -> str:
 	table = fuzz_rows(api)
 	lines = [
-		f"// Generated from extension_api.json, Godot {version_name(api)}; do not edit.",
-		"// Args padded to eight with Nil. Each macro defaults to nothing.",
+		f"// Generated from extension_api.json, Godot {version_name(api)}",
+		"// Args padded to eight with Nil. Each macro defaults to nothing",
 		"",
 	]
 	macros = [
@@ -336,6 +348,7 @@ def main() -> int:
 	args = parser.parse_args()
 	api = json.loads(args.api.read_text())
 	ok = update(COMPILER / "class_enums.def", class_enums(api), args.check)
+	ok = update(COMPILER / "builtin_integer_constants.def", builtin_integer_constants(api), args.check) and ok
 	ok = update(COMPILER / "host_constants.def", host_constants(api), args.check) and ok
 	ok = update(COMPILER / "tests/variant_api.def", variant_api_def(api), args.check) and ok
 	ok = update(TESTS / "variant_api.json", variant_api_json(api), args.check) and ok

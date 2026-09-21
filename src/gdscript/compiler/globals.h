@@ -396,6 +396,13 @@ struct BuiltinConstant {
 	double components[4];
 };
 
+struct BuiltinIntegerConstant {
+	const char* type;
+	const char* name;
+	int64_t value;
+};
+const BuiltinIntegerConstant* find_builtin_integer_constant(const std::string& type, const std::string& name);
+
 // Built-in type constant too large for the guest's inline Variant payload.
 // Components are the flattened constructor arguments from extension_api.json;
 // codegen groups them into vectors before asking Godot to construct the value.

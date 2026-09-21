@@ -536,6 +536,7 @@ private:
 	std::unordered_map<std::string, IRGlobalVar> m_global_const_values;
 	// 'Class.NAME' -> its folded value; a class constant never reaches the IR.
 	std::unordered_map<std::string, IRGlobalVar> m_class_constants;
+	std::unordered_map<std::string, size_t> m_class_preloads;
 	// Forward references read NIL; rejected at this boundary.
 	size_t m_globals_lowered = 0;
 	bool m_members_in_scope = true;
@@ -592,7 +593,7 @@ private:
 	// Returns -1 for non-const or container globals (those stay on LOAD_GLOBAL).
 	int gen_const_global_value(const std::string& name, FunctionContext& func);
 	int gen_folded_const(const IRGlobalVar& global, FunctionContext& func);
-	void register_class_constants(const Program& program);
+	void register_class_constants(const Program& program, IRProgram& ir, FunctionContext& init);
 	int gen_class_constant(const StructDecl& decl, const std::string& name,
 		FunctionContext& func);
 

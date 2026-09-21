@@ -321,6 +321,19 @@ int64_t global_enum_value(size_t index) {
 	return GLOBAL_ENUM_VALUES[index].value;
 }
 
+static const BuiltinIntegerConstant BUILTIN_INTEGER_CONSTANTS[] = {
+#define GDSC_BUILTIN_INT_CONSTANT(type, name, value) {#type, #name, value},
+#include "builtin_integer_constants.def"
+#undef GDSC_BUILTIN_INT_CONSTANT
+};
+
+const BuiltinIntegerConstant* find_builtin_integer_constant(const std::string& type, const std::string& name) {
+	for (const auto& entry : BUILTIN_INTEGER_CONSTANTS) {
+		if (type == entry.type && name == entry.name) return &entry;
+	}
+	return nullptr;
+}
+
 const BuiltinConstant* find_builtin_constant(const std::string& type, const std::string& name) {
 	for (const BuiltinConstant& entry : BUILTIN_CONSTANTS) {
 		if (type == entry.type && name == entry.name) {
@@ -340,6 +353,9 @@ const HostConstant* find_host_constant(const std::string& type, const std::strin
 }
 
 bool has_builtin_constants(const std::string& type) {
+	for (const auto& entry : BUILTIN_INTEGER_CONSTANTS) {
+		if (type == entry.type) return true;
+	}
 	for (const BuiltinConstant& entry : BUILTIN_CONSTANTS) {
 		if (type == entry.type) {
 			return true;

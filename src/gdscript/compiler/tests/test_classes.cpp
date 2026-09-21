@@ -423,7 +423,7 @@ void test_what_is_refused() {
 		"class A:\n"
 		"\tsignal boom\n"
 		"func test():\n\treturn 1\n");
-	check(body.find("constant, field and function") != std::string::npos,
+	check(body.find("require native class support") != std::string::npos,
 		"what a class body does not hold is refused: " + body);
 
 	std::cout << "  ✓ What cannot work is refused at compile time" << std::endl;

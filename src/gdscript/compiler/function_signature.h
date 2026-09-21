@@ -108,6 +108,7 @@ struct ClassSignature {
 	std::vector<FunctionSignature> trait_methods;
 	std::vector<ClassField> trait_fields;
 	std::vector<FunctionSignature> trait_signals;
+	std::vector<FunctionSignature> signals;
 };
 
 // Encoded as a single blob (one scoped variant) rather than Array of Dictionaries

@@ -375,6 +375,13 @@ std::vector<uint8_t> encode_class_signatures(const std::vector<ClassSignature> &
 		write_scalar<uint32_t>(out, uint32_t(signals.size()));
 		out.insert(out.end(), signals.begin(), signals.end());
 	}
+	write_scalar<uint32_t>(out, 0x47495343u); // "CSIG"
+	write_scalar<uint32_t>(out, uint32_t(classes.size()));
+	for (const ClassSignature& cls : classes) {
+		const auto signals = encode_function_signatures(cls.signals);
+		write_scalar<uint32_t>(out, uint32_t(signals.size()));
+		out.insert(out.end(), signals.begin(), signals.end());
+	}
 	return out;
 }
 
@@ -504,6 +511,21 @@ bool decode_class_signatures(const uint8_t *data, size_t size,
 		if (!reader.ok || reader.offset + signals_size > size ||
 			!decode_function_signatures(reader.data + reader.offset, signals_size,
 				cls.trait_signals)) {
+			out.clear();
+			return false;
+		}
+		reader.offset += signals_size;
+	}
+	if (reader.ok && reader.offset == size) return true;
+	if (reader.scalar<uint32_t>() != 0x47495343u ||
+		reader.scalar<uint32_t>() != out.size()) {
+		out.clear();
+		return false;
+	}
+	for (ClassSignature& cls : out) {
+		const uint32_t signals_size = reader.scalar<uint32_t>();
+		if (!reader.ok || signals_size > size - reader.offset ||
+			!decode_function_signatures(reader.data + reader.offset, signals_size, cls.signals)) {
 			out.clear();
 			return false;
 		}
