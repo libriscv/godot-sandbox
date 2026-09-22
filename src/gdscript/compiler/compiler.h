@@ -8,6 +8,7 @@
 #include "profiling_layout.h"
 #include "variant_layout.h"
 #include <optional>
+#include <functional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -68,6 +69,8 @@ struct CompilerOptions {
 		bool trait_only = false;
 	};
 	std::vector<BaseSource> base_sources; // nearest base first
+	// Native hosts resolve a script path relative to the declaring source.
+	std::function<BaseSource(const std::string &, const std::string &)> load_class_source;
 };
 
 // Structured error for editor underlines; the formatted string is in get_error().

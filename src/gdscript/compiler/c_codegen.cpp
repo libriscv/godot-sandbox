@@ -8,6 +8,7 @@
 #include <cmath>
 #include <iomanip>
 #include <limits>
+#include <queue>
 #include <sstream>
 #include <stdexcept>
 #include <unordered_map>
@@ -84,106 +85,121 @@ std::vector<int> proven_locals(const IRFunction &f, const IRProgram &p) {
     // Reaching definitions keep an entry parameter separate from a later r0
     // return assignment. Union definitions only for the storage decision.
     const size_t n = f.instructions.size();
-    std::vector<std::vector<uint64_t>> incoming(n, std::vector<uint64_t>(types.size()));
-    std::vector<bool> reached(n), queued(n);
-    std::vector<size_t> work;
+    // Keep state at basic-block entries, not at every instruction. Visit
+    // forward blocks in source order so joins see both arms before propagating
+    // through the rest of a large acyclic function.
+    std::vector<size_t> starts;
     std::unordered_map<uint32_t, size_t> labels;
-    for (size_t j = 0; j < n; ++j)
-        if (f.instructions[j].opcode == IROpcode::LABEL) labels[f.instructions[j].operands[0].string_id] = j;
+    bool start = true;
+    for (size_t j = 0; j < n; ++j) {
+        const auto &i = f.instructions[j];
+        if (start || i.opcode == IROpcode::LABEL) starts.push_back(j);
+        start = ir_has_effect(i.opcode, IR_TERMINATOR);
+        if (i.opcode == IROpcode::LABEL) labels[i.operands[0].string_id] = starts.size() - 1;
+        else for (const auto &v : i.operands)
+            if (v.type == IRValue::Type::LABEL) start = true;
+    }
+    const size_t blocks = starts.size();
+    starts.push_back(n);
+    std::vector<std::vector<uint64_t>> incoming(blocks, std::vector<uint64_t>(types.size()));
+    std::vector<bool> reached(blocks), queued(blocks);
+    std::priority_queue<size_t, std::vector<size_t>, std::greater<size_t>> work;
     if (n) {
         incoming[0] = types;
         if (f.parameters.empty()) incoming[0][0] = 1;
         reached[0] = queued[0] = true;
-        work.push_back(0);
+        work.push(0);
     }
     while (!work.empty()) {
-        const size_t at = work.back(); work.pop_back(); queued[at] = false;
-        const auto &i = f.instructions[at];
-        auto state = incoming[at];
-        std::vector<int> reads;
-        ir_collect_read_registers(i, reads);
-        for (int r : reads) types[r] |= state[r];
-        int d = ir_destination_register(i);
-        if (d >= 0) {
-            auto src = [&](int n) { return state[i.operands[n].reg_index()]; };
-            uint64_t t = unknown;
-            switch (i.opcode) {
-            case IROpcode::LOAD_IMM: case IROpcode::TYPE_OF: t = 4; break;
-            case IROpcode::LOAD_FLOAT_IMM: t = 8; break;
-            case IROpcode::LOAD_BOOL: case IROpcode::TYPE_TEST: case IROpcode::TYPE_TEST_MASK:
-            case IROpcode::CMP_EQ: case IROpcode::CMP_NEQ: case IROpcode::CMP_LT:
-            case IROpcode::CMP_LTE: case IROpcode::CMP_GT: case IROpcode::CMP_GTE:
-            case IROpcode::AND: case IROpcode::OR: case IROpcode::NOT: t = 2; break;
-            case IROpcode::LOAD_NIL: t = 1; break;
-            case IROpcode::CONSTRUCT:
-                t = i.operands[1].immediate() >= 1 && i.operands[1].immediate() < 39 ? uint64_t(1) << i.operands[1].immediate() : unknown; break;
-            case IROpcode::LOAD_STRING: t = uint64_t(1) << 4; break;
-            case IROpcode::MAKE_ARRAY: t = uint64_t(1) << 28; break;
-            case IROpcode::MAKE_DICTIONARY: case IROpcode::MAKE_DICTIONARY_KEYED: t = uint64_t(1) << 27; break;
-            case IROpcode::MAKE_CALLABLE: t = uint64_t(1) << 25; break;
-            case IROpcode::MAKE_VECTOR2: case IROpcode::MAKE_VECTOR3: case IROpcode::MAKE_VECTOR4:
-            case IROpcode::MAKE_VECTOR2I: case IROpcode::MAKE_VECTOR3I: case IROpcode::MAKE_VECTOR4I:
-            case IROpcode::MAKE_COLOR: case IROpcode::MAKE_RECT2: case IROpcode::MAKE_RECT2I: case IROpcode::MAKE_PLANE: {
-                const int ids[] = {5,9,12,6,10,13,20,7,8,14};
-                t = uint64_t(1) << ids[int(i.opcode) - int(IROpcode::MAKE_VECTOR2)]; break;
-            }
-            case IROpcode::CALL: case IROpcode::CALL_HOSTED:
-                for (const auto &callee : p.functions)
-                    if (callee.name == p.strings[i.operands[0].string_id]) {
-                        if (callee.return_set) t = callee.return_set;
-                        else if (callee.return_type_hint >= 1 && callee.return_type_hint < 39 && callee.return_type_hint != 24)
-                            t = uint64_t(1) << callee.return_type_hint;
-                    }
-                break;
-            case IROpcode::VCALL: {
-                const auto &name = p.strings[i.operands[2].string_id];
-                const auto v = src(1);
-                if (v == (1ULL << 5) || v == (1ULL << 9) || v == (1ULL << 12)) {
-                    if (name == "normalized" || name == "lerp") t = v;
-                    if (name == "length" || name == "length_squared" || name == "distance_to" ||
-                        name == "distance_squared_to" || name == "dot") t = 8;
-                } else if (!v) t = 0;
-                break;
-            }
-            case IROpcode::VGET: case IROpcode::VGET_INLINE: {
-                const auto &name = i.opcode == IROpcode::VGET ? p.string_constants.at(i.operands[2].immediate()) : p.strings[i.operands[2].string_id];
-                const auto v = src(1);
-                const int width = v == (1ULL << 5) ? 2 : v == (1ULL << 9) ? 3 : v == (1ULL << 12) ? 4 : 0;
-                if (width && name.size() == 1 && std::string("xyzw").substr(0, width).find(name) != std::string::npos) t = 8;
-                else if (!v) t = 0;
-                break;
-            }
-            case IROpcode::MOVE: t = src(1); break;
-            case IROpcode::GLOBAL_CALL:
-                if (engine_math(static_cast<GlobalFn>(i.operands[1].immediate())) ||
-                    inline_math(static_cast<GlobalFn>(i.operands[1].immediate()))) {
-                    auto result = global_function(static_cast<GlobalFn>(i.operands[1].immediate())).result;
-                    t = result == GlobalResult::FLOAT ? 8 : result == GlobalResult::INT ? 4 :
-                        result == GlobalResult::BOOL ? 2 : unknown;
+        const size_t block = work.top(); work.pop(); queued[block] = false;
+        auto state = incoming[block];
+        for (size_t at = starts[block]; at < starts[block + 1]; ++at) {
+            const auto &i = f.instructions[at];
+            std::vector<int> reads;
+            ir_collect_read_registers(i, reads);
+            for (int r : reads) types[r] |= state[r];
+            int d = ir_destination_register(i);
+            if (d >= 0) {
+                auto src = [&](int n) { return state[i.operands[n].reg_index()]; };
+                uint64_t t = unknown;
+                switch (i.opcode) {
+                case IROpcode::LOAD_IMM: case IROpcode::TYPE_OF: t = 4; break;
+                case IROpcode::LOAD_FLOAT_IMM: t = 8; break;
+                case IROpcode::LOAD_BOOL: case IROpcode::TYPE_TEST: case IROpcode::TYPE_TEST_MASK:
+                case IROpcode::CMP_EQ: case IROpcode::CMP_NEQ: case IROpcode::CMP_LT:
+                case IROpcode::CMP_LTE: case IROpcode::CMP_GT: case IROpcode::CMP_GTE:
+                case IROpcode::AND: case IROpcode::OR: case IROpcode::NOT: t = 2; break;
+                case IROpcode::LOAD_NIL: t = 1; break;
+                case IROpcode::CONSTRUCT:
+                    t = i.operands[1].immediate() >= 1 && i.operands[1].immediate() < 39 ? uint64_t(1) << i.operands[1].immediate() : unknown; break;
+                case IROpcode::LOAD_STRING: t = uint64_t(1) << 4; break;
+                case IROpcode::MAKE_ARRAY: t = uint64_t(1) << 28; break;
+                case IROpcode::MAKE_DICTIONARY: case IROpcode::MAKE_DICTIONARY_KEYED: t = uint64_t(1) << 27; break;
+                case IROpcode::MAKE_CALLABLE: t = uint64_t(1) << 25; break;
+                case IROpcode::MAKE_VECTOR2: case IROpcode::MAKE_VECTOR3: case IROpcode::MAKE_VECTOR4:
+                case IROpcode::MAKE_VECTOR2I: case IROpcode::MAKE_VECTOR3I: case IROpcode::MAKE_VECTOR4I:
+                case IROpcode::MAKE_COLOR: case IROpcode::MAKE_RECT2: case IROpcode::MAKE_RECT2I: case IROpcode::MAKE_PLANE: {
+                    const int ids[] = {5,9,12,6,10,13,20,7,8,14};
+                    t = uint64_t(1) << ids[int(i.opcode) - int(IROpcode::MAKE_VECTOR2)]; break;
                 }
-                if (static_cast<GlobalFn>(i.operands[1].immediate()) == GlobalFn::TO_FLOAT ||
-                    static_cast<GlobalFn>(i.operands[1].immediate()) == GlobalFn::FLOAT_IDENTITY) t = 8;
-                if (static_cast<GlobalFn>(i.operands[1].immediate()) == GlobalFn::TO_INT) t = 4;
-                break;
-            case IROpcode::CONVERT: case IROpcode::COERCE:
-                t = i.type_hint >= 1 && i.type_hint < 39 ? uint64_t(1) << i.type_hint : unknown; break;
-            case IROpcode::ADD: case IROpcode::SUB: case IROpcode::MUL: case IROpcode::DIV:
-                if (!src(1) || !src(2)) t = 0;
-                else if (!((src(1) | src(2)) & ~uint64_t(12)))
-                    t = ((src(1) & src(2) & 4) ? 4 : 0) | (((src(1) | src(2)) & 8) ? 8 : 0);
-                else if (src(1) == src(2) && (src(1) == (1ULL << 5) || src(1) == (1ULL << 9) || src(1) == (1ULL << 12))) t = src(1);
-                else if ((i.opcode == IROpcode::MUL || i.opcode == IROpcode::DIV) &&
-                    (src(1) == (1ULL << 5) || src(1) == (1ULL << 9) || src(1) == (1ULL << 12)) && !(src(2) & ~uint64_t(12))) t = src(1);
-                break;
-            case IROpcode::MOD: case IROpcode::BIT_AND: case IROpcode::BIT_OR:
-            case IROpcode::BIT_XOR: case IROpcode::SHL: case IROpcode::SHR:
-                t = !src(1) || !src(2) ? 0 : src(1) == 4 && src(2) == 4 ? 4 : unknown; break;
-            case IROpcode::NEG: case IROpcode::BIT_NOT:
-                t = src(1) == 4 ? 4 : src(1) == 0 ? 0 : unknown; break;
-            default: break;
+                case IROpcode::CALL: case IROpcode::CALL_HOSTED:
+                    for (const auto &callee : p.functions)
+                        if (callee.name == p.strings[i.operands[0].string_id]) {
+                            if (callee.return_set) t = callee.return_set;
+                            else if (callee.return_type_hint >= 1 && callee.return_type_hint < 39 && callee.return_type_hint != 24)
+                                t = uint64_t(1) << callee.return_type_hint;
+                        }
+                    break;
+                case IROpcode::VCALL: {
+                    const auto &name = p.strings[i.operands[2].string_id];
+                    const auto v = src(1);
+                    if (v == (1ULL << 5) || v == (1ULL << 9) || v == (1ULL << 12)) {
+                        if (name == "normalized" || name == "lerp") t = v;
+                        if (name == "length" || name == "length_squared" || name == "distance_to" ||
+                            name == "distance_squared_to" || name == "dot") t = 8;
+                    } else if (!v) t = 0;
+                    break;
+                }
+                case IROpcode::VGET: case IROpcode::VGET_INLINE: {
+                    const auto &name = i.opcode == IROpcode::VGET ? p.string_constants.at(i.operands[2].immediate()) : p.strings[i.operands[2].string_id];
+                    const auto v = src(1);
+                    const int width = v == (1ULL << 5) ? 2 : v == (1ULL << 9) ? 3 : v == (1ULL << 12) ? 4 : 0;
+                    if (width && name.size() == 1 && std::string("xyzw").substr(0, width).find(name) != std::string::npos) t = 8;
+                    else if (!v) t = 0;
+                    break;
+                }
+                case IROpcode::MOVE: t = src(1); break;
+                case IROpcode::GLOBAL_CALL:
+                    if (engine_math(static_cast<GlobalFn>(i.operands[1].immediate())) ||
+                        inline_math(static_cast<GlobalFn>(i.operands[1].immediate()))) {
+                        auto result = global_function(static_cast<GlobalFn>(i.operands[1].immediate())).result;
+                        t = result == GlobalResult::FLOAT ? 8 : result == GlobalResult::INT ? 4 :
+                            result == GlobalResult::BOOL ? 2 : unknown;
+                    }
+                    if (static_cast<GlobalFn>(i.operands[1].immediate()) == GlobalFn::TO_FLOAT ||
+                        static_cast<GlobalFn>(i.operands[1].immediate()) == GlobalFn::FLOAT_IDENTITY) t = 8;
+                    if (static_cast<GlobalFn>(i.operands[1].immediate()) == GlobalFn::TO_INT) t = 4;
+                    break;
+                case IROpcode::CONVERT: case IROpcode::COERCE:
+                    t = i.type_hint >= 1 && i.type_hint < 39 ? uint64_t(1) << i.type_hint : unknown; break;
+                case IROpcode::ADD: case IROpcode::SUB: case IROpcode::MUL: case IROpcode::DIV:
+                    if (!src(1) || !src(2)) t = 0;
+                    else if (!((src(1) | src(2)) & ~uint64_t(12)))
+                        t = ((src(1) & src(2) & 4) ? 4 : 0) | (((src(1) | src(2)) & 8) ? 8 : 0);
+                    else if (src(1) == src(2) && (src(1) == (1ULL << 5) || src(1) == (1ULL << 9) || src(1) == (1ULL << 12))) t = src(1);
+                    else if ((i.opcode == IROpcode::MUL || i.opcode == IROpcode::DIV) &&
+                        (src(1) == (1ULL << 5) || src(1) == (1ULL << 9) || src(1) == (1ULL << 12)) && !(src(2) & ~uint64_t(12))) t = src(1);
+                    break;
+                case IROpcode::MOD: case IROpcode::BIT_AND: case IROpcode::BIT_OR:
+                case IROpcode::BIT_XOR: case IROpcode::SHL: case IROpcode::SHR:
+                    t = !src(1) || !src(2) ? 0 : src(1) == 4 && src(2) == 4 ? 4 : unknown; break;
+                case IROpcode::NEG: case IROpcode::BIT_NOT:
+                    t = src(1) == 4 ? 4 : src(1) == 0 ? 0 : unknown; break;
+                default: break;
+                }
+                state[d] = t;
+                types[d] |= t;
             }
-            state[d] = t;
-            types[d] |= t;
         }
         auto merge = [&](size_t edge) {
             bool changed = !reached[edge];
@@ -192,9 +208,10 @@ std::vector<int> proven_locals(const IRFunction &f, const IRProgram &p) {
                 auto value = incoming[edge][r] | state[r];
                 if (value != incoming[edge][r]) { incoming[edge][r] = value; changed = true; }
             }
-            if (changed && !queued[edge]) { queued[edge] = true; work.push_back(edge); }
+            if (changed && !queued[edge]) { queued[edge] = true; work.push(edge); }
         };
-        if (!ir_has_effect(i.opcode, IR_TERMINATOR) && at + 1 < n) merge(at + 1);
+        const auto &i = f.instructions[starts[block + 1] - 1];
+        if (!ir_has_effect(i.opcode, IR_TERMINATOR) && block + 1 < blocks) merge(block + 1);
         if (i.opcode != IROpcode::LABEL)
             for (const auto &v : i.operands)
                 if (v.type == IRValue::Type::LABEL) merge(labels.at(v.string_id));
@@ -1110,7 +1127,7 @@ struct Emitter {
                 const int number = a[1].immediate();
                 switch (number) {
                 case ECALL_CLASS_BIND:
-                    op("GJ_CLASS_BIND", reg(4), reg(4), constant(a[2])); break;
+                    op("GJ_CLASS_BIND", reg(0), reg(4), constant(a[2])); break;
                 case ECALL_ARRAY_SIZE: case ECALL_STRING_SIZE:
                     op(number == ECALL_ARRAY_SIZE ? "GJ_ARRAY_SIZE" : "GJ_CALL", reg(0), reg(2), number == ECALL_ARRAY_SIZE ? "\"size\"" : "\"length\""); break;
                 case ECALL_ARRAY_AT: case ECALL_STRING_AT: case ECALL_VARIANT_GET:

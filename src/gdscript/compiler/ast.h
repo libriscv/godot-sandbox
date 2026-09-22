@@ -483,6 +483,7 @@ struct StructField {
 
 struct StructDecl {
 	std::string name;
+	std::string source_path; // imported native script class, otherwise empty
 	std::vector<StructField> fields;
 	int line = 0;
 	int column = 0;

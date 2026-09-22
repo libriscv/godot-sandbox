@@ -2168,6 +2168,8 @@ ExprPtr Parser::parse_factor() {
 }
 
 ExprPtr Parser::parse_unary() {
+	// Prefix not is also legal after a tighter binary operator.
+	if (check(TokenType::NOT)) return parse_not();
 	// `await` at unary precedence, matching GDScript.
 	if (check(TokenType::AWAIT)) {
 		const Token& op = advance();

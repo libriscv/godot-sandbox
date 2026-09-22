@@ -2,6 +2,7 @@
 #include "compiler_exception.h"
 #include <algorithm>
 #include <sstream>
+#include <queue>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -287,11 +288,15 @@ private:
 		m_blocks[0].entry_initialized = true;
 		m_blocks[0].reachable = true;
 
-		// Forward dataflow to fixpoint.
-		std::vector<size_t> worklist { 0 };
+		// Process forward joins after their predecessors, without duplicate work.
+		std::priority_queue<size_t, std::vector<size_t>, std::greater<size_t>> worklist;
+		std::vector<bool> queued(m_blocks.size(), false);
+		worklist.push(0);
+		queued[0] = true;
 		while (!worklist.empty()) {
-			const size_t index = worklist.back();
-			worklist.pop_back();
+			const size_t index = worklist.top();
+			worklist.pop();
+			queued[index] = false;
 
 			RegisterState state = m_blocks[index].entry;
 			transfer(m_blocks[index], state, /*report=*/false);
@@ -307,8 +312,9 @@ private:
 				} else {
 					changed = target.entry.merge_from(state);
 				}
-				if (changed) {
-					worklist.push_back(successor);
+				if (changed && !queued[successor]) {
+					queued[successor] = true;
+					worklist.push(successor);
 				}
 			}
 		}

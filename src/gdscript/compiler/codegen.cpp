@@ -1,5 +1,6 @@
 #include <algorithm>
 #include "codegen.h"
+#include "ast_clone.h"
 #include "trait_conformance.h"
 #include "syscall_numbers.h"
 #include "compiler_exception.h"
@@ -90,7 +91,10 @@ TypeSet CodeGenerator::type_set_from(const TypeExpr& expr, int line, int column)
 				error_at("Script " + std::string(structure->is_class ? "class" : "struct") +
 					" '" + name + "' cannot be used in a union type yet", line, column);
 			}
-			resolved = Variant::DICTIONARY;
+			// Native-backed classes use Object values; structs and sandbox
+			// classes retain their Dictionary representation.
+			resolved = m_native_classes && structure->is_class
+				? Variant::OBJECT : Variant::DICTIONARY;
 		}
 		if (find_trait(name) != nullptr) {
 			result.mask |= uint64_t(1) << Variant::OBJECT;
@@ -750,8 +754,34 @@ IRProgram CodeGenerator::generate(const Program& program) {
 	m_pending_lambdas.clear();
 	m_next_lambda = 0;
 
+	struct NativeDefault {
+		FunctionDecl function;
+		const StructDecl *owner;
+	};
+	std::vector<NativeDefault> native_defaults;
+	auto complete_defaults = [&](FunctionSignature &signature, const FunctionDecl &decl, const StructDecl *owner) {
+		if (!m_native_classes) return;
+		const size_t offset = signature.parameters.size() - decl.parameters.size();
+		for (size_t j = 0; j < decl.parameters.size(); ++j) {
+			if (!decl.parameters[j].default_value) continue;
+			FunctionDecl helper;
+			helper.name = "@default" + std::to_string(native_defaults.size());
+			helper.is_static = true;
+			helper.chain_link = decl.chain_link;
+			helper.line = decl.parameters[j].line;
+			helper.body.push_back(std::make_unique<ReturnStmt>(clone_expr(decl.parameters[j].default_value.get())));
+			signature.parameters[j + offset].default_function = owner
+				? lifted_method_name(*owner, helper.name) : helper.name;
+			native_defaults.push_back({std::move(helper), owner});
+		}
+		signature.required_arguments = signature.parameters.size();
+		while (signature.required_arguments && signature.parameters[signature.required_arguments - 1].optional())
+			--signature.required_arguments;
+	};
+
 	for (const auto& decl : program.functions) {
 		ir_program.signatures.push_back(build_signature(decl));
+		complete_defaults(ir_program.signatures.back(), decl, nullptr);
 		ir_program.functions.push_back(generate_function(decl));
 		if (decl.rpc_config.has_value() && decl.chain_name.empty()) {
 			RPCConfig config = *decl.rpc_config;
@@ -785,6 +815,7 @@ IRProgram CodeGenerator::generate(const Program& program) {
 			// signature the host checks arity against never mentions it.
 			FunctionSignature signature = build_signature(method);
 			signature.name = lifted_method_name(decl, method.name);
+			complete_defaults(signature, method, &decl);
 			ir_program.signatures.push_back(std::move(signature));
 			ir_program.functions.push_back(generate_function(method, &decl));
 		}
@@ -809,6 +840,11 @@ IRProgram CodeGenerator::generate(const Program& program) {
 				std::make_unique<MemberCallExpr>(std::make_unique<VariableExpr>(decl.name),
 					"new", std::move(arguments), true)));
 			FunctionSignature signature = init != nullptr ? build_signature(*init) : FunctionSignature();
+			if (init) {
+				const StructDecl *owner = nullptr;
+				find_class_method(decl, "_init", &owner);
+				complete_defaults(signature, *init, owner);
+			}
 			signature.name = factory.name;
 			signature.is_static = true;
 			signature.return_type = Variant::OBJECT;
@@ -826,6 +862,19 @@ IRProgram CodeGenerator::generate(const Program& program) {
 		}
 	}
 
+	size_t emitted_defaults = 0;
+	auto emit_defaults = [&] {
+		while (emitted_defaults < native_defaults.size()) {
+			const auto &helper = native_defaults[emitted_defaults++];
+			auto function = generate_function(helper.function, helper.owner);
+			FunctionSignature signature;
+			signature.name = function.name;
+			ir_program.signatures.push_back(std::move(signature));
+			ir_program.functions.push_back(std::move(function));
+		}
+	};
+	emit_defaults();
+
 	// Queue grows while iterating (nested lambdas append).
 	for (size_t i = 0; i < m_pending_lambdas.size(); i++) {
 		const PendingLambda pending = m_pending_lambdas[i];
@@ -840,6 +889,7 @@ IRProgram CodeGenerator::generate(const Program& program) {
 			signature.parameters.insert(signature.parameters.begin(), std::move(captures));
 			++signature.required_arguments;
 		}
+		complete_defaults(signature, *pending.decl, pending.owner);
 		signature.name = pending.lifted_name;
 		signature.line = pending.decl->line;
 		ir_program.signatures.push_back(std::move(signature));
@@ -857,6 +907,7 @@ IRProgram CodeGenerator::generate(const Program& program) {
 		m_current_chain_function.clear();
 		lifted.name = pending.lifted_name;
 		ir_program.functions.push_back(std::move(lifted));
+		emit_defaults();
 	}
 	m_pending_lambdas.clear();
 
@@ -873,7 +924,7 @@ IRProgram CodeGenerator::generate(const Program& program) {
 IRFunction CodeGenerator::generate_function(const FunctionDecl& decl, const StructDecl* owner) {
 	FunctionContext func;
 	func.ir.name = owner != nullptr ? lifted_method_name(*owner, decl.name) : decl.name;
-	func.ir.source_path = size_t(decl.chain_link) < m_chain.paths.size()
+	func.ir.source_path = owner && !owner->source_path.empty() ? owner->source_path : size_t(decl.chain_link) < m_chain.paths.size()
 		? m_chain.paths[size_t(decl.chain_link)] : m_source_path;
 	func.ir.is_coroutine = decl.is_coroutine;
 	const TypeSet return_set = type_set_from(decl.return_type, decl.line, decl.column);
@@ -4244,8 +4295,8 @@ std::string CodeGenerator::resolve_resource_path(const std::string& path) const 
 		return path;
 	}
 
-	std::string source = m_source_path;
-	if (size_t(m_current_chain_link) < m_chain.paths.size() &&
+	std::string source = m_current_class && !m_current_class->source_path.empty() ? m_current_class->source_path : m_source_path;
+	if ((!m_current_class || m_current_class->source_path.empty()) && size_t(m_current_chain_link) < m_chain.paths.size() &&
 		!m_chain.paths[size_t(m_current_chain_link)].empty()) {
 		source = m_chain.paths[size_t(m_current_chain_link)];
 	}
@@ -7764,6 +7815,12 @@ const std::string* CodeGenerator::native_base(const StructDecl& decl) const {
 }
 
 int CodeGenerator::gen_native_base_load(int self_reg, FunctionContext& func) {
+	if (m_native_classes) {
+		int base_reg = alloc_register(func);
+		func.ir.instructions.emplace_back(IROpcode::MOVE, IRValue::reg(base_reg), IRValue::reg(self_reg));
+		set_register_type(func, base_reg, Variant::OBJECT);
+		return base_reg;
+	}
 	int base_reg = gen_dict_get(self_reg, NATIVE_BASE_KEY, func);
 	set_register_type(func, base_reg, Variant::OBJECT);
 	return base_reg;
@@ -7870,7 +7927,9 @@ void CodeGenerator::register_class_constants(const Program& program, IRProgram& 
 	FunctionContext& init) {
 	m_class_constants.clear();
 	m_class_preloads.clear();
+	const auto *previous_class = m_current_class;
 	for (const StructDecl& decl : program.structs) {
+		m_current_class = &decl;
 		for (const StructField& constant : decl.constants) {
 			if (const auto* call = dynamic_cast<const CallExpr*>(constant.default_value.get());
 				call != nullptr && call->function_name == "preload" && call->arguments.size() == 1) {
@@ -7914,6 +7973,7 @@ void CodeGenerator::register_class_constants(const Program& program, IRProgram& 
 			m_class_constants[folded.name] = std::move(folded);
 		}
 	}
+	m_current_class = previous_class;
 }
 
 // Walks the declared chain, so a constant is inherited like a field.
@@ -8024,7 +8084,7 @@ void CodeGenerator::set_register_struct(FunctionContext& func, int reg, const St
 	for (const TraitDecl* iface : used_traits(*decl)) {
 		add_register_trait(func, reg, iface);
 	}
-	set_register_type(func, reg, Variant::DICTIONARY);
+	set_register_type(func, reg, m_native_classes && decl->is_class ? Variant::OBJECT : Variant::DICTIONARY);
 }
 
 const StructDecl* CodeGenerator::get_register_struct(const FunctionContext& func, int reg) const {
@@ -8291,6 +8351,7 @@ ClassSignature CodeGenerator::build_class_signature(const StructDecl& decl,
 {
 	ClassSignature out;
 	out.name = decl.name;
+	out.source_path = decl.source_path;
 	out.base_name = class_base(decl) != nullptr ? decl.base_name : std::string();
 	out.native_base = engine_base;
 	out.line = decl.line;
@@ -8813,6 +8874,10 @@ int CodeGenerator::gen_class_construct(const StructDecl& decl, const std::vector
 		bind.operands.push_back(IRValue::imm(static_cast<int64_t>(decl.name.length())));
 		bind.operands.push_back(IRValue::reg(result_reg));
 		func.ir.instructions.push_back(bind);
+		if (m_native_classes) {
+			func.ir.instructions.emplace_back(IROpcode::MOVE, IRValue::reg(result_reg), IRValue::reg(bind_reg));
+			set_register_type(func, result_reg, Variant::OBJECT);
+		}
 		free_register(func, bind_reg);
 	}
 
@@ -8879,7 +8944,7 @@ static bool returns_only_self(const std::vector<StmtPtr>& body) {
 
 int CodeGenerator::gen_class_method_call(const StructDecl& decl, const FunctionDecl& method,
 	const StructDecl& owner, int self_reg, const std::vector<ExprPtr>& arguments,
-	const NamedArguments& names, FunctionContext& func, const Expr* site)
+	const NamedArguments& names, FunctionContext& func, const Expr* site, bool direct)
 {
 	for (size_t i = 0; i < arguments.size(); i++) {
 		if (!names.argument_name(i).empty()) {
@@ -8925,14 +8990,21 @@ int CodeGenerator::gen_class_method_call(const StructDecl& decl, const FunctionD
 		}
 	}
 
-	IRInstruction call(method.is_coroutine ? IROpcode::CALL_HOSTED : IROpcode::CALL);
-	call.operands.push_back(ir_str(lifted_method_name(owner, method.name)));
-	call.operands.push_back(IRValue::reg(result_reg));
-	call.operands.push_back(IRValue::imm(int64_t(arg_regs.size())));
-	for (int reg : arg_regs) {
-		call.operands.push_back(IRValue::reg(reg));
+	if (m_native_classes && decl.is_class && self_reg >= 0 && !direct && method.name != "_init") {
+		IRInstruction call(IROpcode::VCALL);
+		call.operands = {IRValue::reg(result_reg), IRValue::reg(self_reg),
+			ir_str(method.name), IRValue::imm(int64_t(arg_regs.size() - 1))};
+		for (size_t i = 1; i < arg_regs.size(); ++i)
+			call.operands.push_back(IRValue::reg(arg_regs[i]));
+		func.ir.instructions.push_back(std::move(call));
+	} else {
+		IRInstruction call(method.is_coroutine ? IROpcode::CALL_HOSTED : IROpcode::CALL);
+		call.operands.push_back(ir_str(lifted_method_name(owner, method.name)));
+		call.operands.push_back(IRValue::reg(result_reg));
+		call.operands.push_back(IRValue::imm(int64_t(arg_regs.size())));
+		for (int reg : arg_regs) call.operands.push_back(IRValue::reg(reg));
+		func.ir.instructions.push_back(std::move(call));
 	}
-	func.ir.instructions.push_back(call);
 
 	for (size_t i = 1; i < arg_regs.size(); i++) {
 		free_register(func, arg_regs[i]);
@@ -8993,7 +9065,7 @@ int CodeGenerator::gen_super_call(const MemberCallExpr* expr, FunctionContext& f
 	}
 	if (method != nullptr) {
 		return gen_class_method_call(*base, *method, *owner, self->register_num, expr->arguments,
-			*expr, func, expr);
+			*expr, func, expr, true);
 	}
 
 	int base_reg = gen_native_base_load(self->register_num, func);
@@ -10086,9 +10158,9 @@ int CodeGenerator::gen_dynamic_member_get(int obj_reg, const std::string& member
 
 		// A class instance holds its own fields as keys and the engine object it
 		// extends under `@base`. A name that is not a key is a property of that
-		// object. Only emitted when the script declares such a class; a plain
+		// object. Only emitted for Dictionary-backed classes; a plain
 		// Dictionary then pays one lookup, and only for a key it does not have.
-		if (has_engine_based_classes()) {
+		if (!m_native_classes && has_engine_based_classes()) {
 			const std::string base_label = make_label("member_get_base_done");
 			int found_reg = alloc_register(func);
 			func.ir.instructions.emplace_back(IROpcode::TYPE_TEST, IRValue::reg(found_reg),
@@ -10173,9 +10245,9 @@ void CodeGenerator::gen_dynamic_member_set(int obj_reg, const std::string& membe
 		emit_conditional_branch(IROpcode::BRANCH_ZERO, test_reg, next_label, func);
 		free_register(func, test_reg);
 
-		// The read's mirror: a name the instance does not declare is written to the
-		// engine object it extends, not added as a key.
-		if (has_engine_based_classes()) {
+		// Dictionary-backed classes mirror the read: a name the instance does
+		// not declare is written to the engine object it extends.
+		if (!m_native_classes && has_engine_based_classes()) {
 			const std::string element_label = make_label("member_set_element");
 			int base_reg = gen_dict_get(obj_reg, NATIVE_BASE_KEY, func);
 			int is_object_reg = alloc_register(func);
@@ -10497,6 +10569,8 @@ bool CodeGenerator::is_global_class(const std::string& name) const {
 }
 
 bool CodeGenerator::names_an_engine_type(const std::string& name, FunctionContext& func) {
+	for (auto *owner = m_current_class; owner; owner = class_base(*owner))
+		if (owner->find_constant(name)) return false;
 	if (name.empty() || name[0] < 'A' || name[0] > 'Z') {
 		return false;
 	}

@@ -24,7 +24,7 @@ struct FunctionParameter {
 	// Compiler-only type name for Dictionary-backed structs (or Object classes).
 	std::string class_name;
 
-	// NONE: no default or default does not fold to a constant (parameter stays required).
+	// NONE: no portable constant default; a native evaluator may still supply one.
 	enum class DefaultKind : uint8_t {
 		NONE,
 		NIL,
@@ -38,7 +38,9 @@ struct FunctionParameter {
 	DefaultKind default_kind = DefaultKind::NONE;
 	std::variant<int64_t, double, std::string, bool> default_value;
 
-	bool optional() const { return default_kind != DefaultKind::NONE; }
+	// Native backend evaluator; deliberately absent from the sandbox wire format.
+	std::string default_function;
+	bool optional() const { return default_kind != DefaultKind::NONE || !default_function.empty(); }
 };
 
 struct FunctionSignature {
@@ -90,6 +92,7 @@ struct ClassMethod {
 
 struct ClassSignature {
 	std::string name;
+	std::string source_path; // native-only imported script identity
 	// Declared parent class; empty when the class extends the engine directly.
 	std::string base_name;
 	// Engine class the declared chain bottoms out in.

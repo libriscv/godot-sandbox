@@ -415,7 +415,7 @@ private:
 		const NamedArguments& names, FunctionContext& func, const Expr* site);
 	int gen_class_method_call(const StructDecl& decl, const FunctionDecl& method,
 		const StructDecl& owner, int self_reg, const std::vector<ExprPtr>& arguments,
-		const NamedArguments& names, FunctionContext& func, const Expr* site);
+		const NamedArguments& names, FunctionContext& func, const Expr* site, bool direct = false);
 	int class_field_self(const std::string& name, FunctionContext& func);
 	bool is_super(const Expr* expr, FunctionContext& func);
 	int gen_super_call(const MemberCallExpr* expr, FunctionContext& func);

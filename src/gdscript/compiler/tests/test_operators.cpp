@@ -355,6 +355,13 @@ static void test_not_binds_looser_than_comparison() {
 	// `and` is looser still, so this is `(not a) and b`, not `not (a and b)`.
 	assert(run_bool("func f(a: bool, b: bool) -> bool:\n\treturn not a and b\n", "f", {false, true}));
 
+	assert(run_int("func f(a: bool, b: bool) -> bool:\n\treturn a == not b\n", "f", {true, false}));
+	assert(run_int("func f(a: bool, b: bool) -> bool:\n\treturn a != not b\n", "f", {false, false}));
+	assert(run_int("func f(a: bool, b: int, c: int) -> bool:\n\treturn a == not b < c\n",
+		"f", {false, int64_t(1), int64_t(2)}));
+	assert(run_int("func f(a: bool, b: bool) -> bool:\n\treturn a == not not b\n", "f", {true, true}));
+	assert(!run_int("func f(a: bool, b: bool) -> bool:\n\treturn a == not b and false\n", "f", {true, false}));
+
 	std::cout << "  ✓ 'not' binds looser than a comparison" << std::endl;
 }
 

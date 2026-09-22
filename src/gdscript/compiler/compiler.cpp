@@ -37,6 +37,77 @@ std::string source_line_at(const std::string& source, int line) {
 	}
 	return source.substr(begin, end - begin);
 }
+// Import preloaded script bases into the existing class lowering. Keep the
+// resource constant intact: only the inheritance edge names the private class.
+void import_native_bases(Program &program, const CompilerOptions &options) {
+	if (!options.native_classes || !options.load_class_source) return;
+	std::vector<StructDecl> imported;
+	std::unordered_map<std::string, std::string> names;
+	std::unordered_set<std::string> visiting;
+	if (!options.source_path.empty()) visiting.insert(options.source_path);
+	std::function<std::string(const Program &, const std::string &, const std::string &, bool)> resolve;
+	resolve = [&](const Program &scope, const std::string &base, const std::string &source, bool is_path) -> std::string {
+		if (base.empty()) return "RefCounted";
+		if (!is_path) {
+			for (const auto &decl : scope.structs) if (decl.name == base) return base;
+		}
+		std::string path = is_path ? base : std::string();
+		if (!is_path) {
+			for (const auto &global : scope.globals) {
+				if (!global.is_const || global.name != base) continue;
+				const auto *call = dynamic_cast<const CallExpr *>(global.initializer.get());
+				const auto *literal = call && call->function_name == "preload" && call->arguments.size() == 1
+					? dynamic_cast<const LiteralExpr *>(call->arguments[0].get()) : nullptr;
+				if (!literal || literal->lit_type != LiteralExpr::Type::STRING)
+					throw std::runtime_error("Class base '" + base + "' must be a preloaded script");
+				path = std::get<std::string>(literal->value);
+			}
+			if (path.empty()) for (const auto &entry : options.global_script_classes)
+				if (entry.first == base) path = entry.second;
+		}
+		if (path.empty()) return base; // engine class
+		auto loaded = options.load_class_source(path, source);
+		if (visiting.count(loaded.path)) throw std::runtime_error("Cyclic script inheritance: " + loaded.path);
+		if (auto found = names.find(loaded.path); found != names.end()) return found->second;
+		if (visiting.size() >= MAX_CHAIN_DEPTH) throw std::runtime_error("Script inheritance is too deep");
+		visiting.insert(loaded.path);
+		Lexer lexer(loaded.source);
+		Parser parser(lexer.tokenize());
+		auto parsed = parser.parse();
+		apply_traits(parsed);
+		StructDecl decl;
+		decl.name = "@imported" + std::to_string(names.size());
+		names[loaded.path] = decl.name;
+		decl.is_class = true;
+		decl.source_path = loaded.path;
+		decl.base_name = resolve(parsed, parsed.base_class, loaded.path, parsed.base_is_path);
+		decl.methods = std::move(parsed.functions);
+		decl.signals = std::move(parsed.signals);
+		// A nested class has fields, methods and constants. Refuse declarations
+		// whose script-level lifetime/accessors cannot be represented as fields.
+		if (!parsed.structs.empty() || !parsed.enums.empty())
+			throw std::runtime_error("Nested script base contains unsupported nested types: " + loaded.path);
+		for (auto &global : parsed.globals) {
+			if (global.is_static || global.is_onready || global.has_accessors())
+				throw std::runtime_error("Nested script base contains unsupported field accessors or storage: " + loaded.path);
+			StructField field;
+			field.name = global.name;
+			field.type_hint = global.type_hint;
+			field.default_value = std::move(global.initializer);
+			field.line = global.line;
+			field.column = global.column;
+			field.doc_comment = global.doc_comment;
+			(global.is_const ? decl.constants : decl.fields).push_back(std::move(field));
+		}
+		visiting.erase(loaded.path);
+		const auto name = decl.name;
+		imported.push_back(std::move(decl));
+		return name;
+	};
+	for (auto &decl : program.structs)
+		if (decl.is_class) decl.base_name = resolve(program, decl.base_name, options.source_path, false);
+	for (auto &decl : imported) program.structs.push_back(std::move(decl));
+}
 } // namespace
 
 Compiler::Compiler() {}
@@ -178,6 +249,7 @@ std::optional<IRProgram> Compiler::compile_to_ir(const std::string& source, cons
 				}), program.functions.end());
 		}
 
+		import_native_bases(program, options);
 		if (options.native_classes) {
 			for (auto &decl : program.structs)
 				if (decl.is_class && decl.base_name.empty()) decl.base_name = "RefCounted";
