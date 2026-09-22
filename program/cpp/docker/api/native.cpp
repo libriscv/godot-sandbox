@@ -97,7 +97,8 @@ CREATE_SYSCALL(__wrap_memmove, SYSCALL_MEMMOVE);
 CREATE_SYSCALL(__wrap_memcmp, SYSCALL_MEMCMP);
 CREATE_SYSCALL(__wrap_strlen, SYSCALL_STRLEN);
 CREATE_SYSCALL_STRCMP(__wrap_strcmp, SYSCALL_STRCMP);
-CREATE_SYSCALL_STRCMP(__wrap_strncmp, SYSCALL_STRCMP);
+// CREATE_SYSCALL_STRCMP here would clobber a2, maxlen
+CREATE_SYSCALL(__wrap_strncmp, SYSCALL_STRCMP);
 
 extern "C" void *__wrap_malloc(size_t size);
 extern "C" void __wrap_free(void *ptr);
