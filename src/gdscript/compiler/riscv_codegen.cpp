@@ -1076,7 +1076,13 @@ void RISCVCodeGen::plan_scalar_residency(const IRFunction& func) {
 			case IROpcode::LOAD_BOOL:
 			case IROpcode::TYPE_TEST:
 			case IROpcode::TYPE_TEST_MASK:
-			case IROpcode::TRAIT_TEST: type = Variant::BOOL; break;
+			case IROpcode::TRAIT_TEST:
+			case IROpcode::CMP_EQ: case IROpcode::CMP_NEQ:
+			case IROpcode::CMP_LT: case IROpcode::CMP_LTE:
+			case IROpcode::CMP_GT: case IROpcode::CMP_GTE:
+			case IROpcode::AND: case IROpcode::OR: case IROpcode::NOT:
+				// The type hint of a comparison describes its operands. The result is BOOL.
+				type = Variant::BOOL; break;
 			default:
 				if (instr.type_hint == Variant::BOOL || instr.type_hint == Variant::INT ||
 					instr.type_hint == Variant::FLOAT) type = instr.type_hint;
@@ -5675,7 +5681,10 @@ void RISCVCodeGen::emit_jalr(uint8_t rd, uint8_t rs1, int32_t offset) {
 
 void RISCVCodeGen::emit_syscall(unsigned number, int64_t operation) {
 	const auto abi = syscall_abi(number, operation);
-	if (!abi.counted) {
+	// A decoded custom instruction enters its handler without publishing PC.
+	// Assertions report their source location from PC, so THROW keeps the full
+	// ECALL boundary. The runtime still accepts older counted THROW words.
+	if (!abi.counted || number == ECALL_THROW) {
 		emit_li(REG_A7, number);
 		emit_ecall();
 		return;

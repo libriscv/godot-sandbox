@@ -96,3 +96,6 @@ func random_float() -> float:
 func dictionary_edit(value: Dictionary) -> int:
 	value["answer"] = 42
 	return int(value["answer"])
+
+func assertion_failure() -> void:
+	assert(false, "source location")

@@ -154,6 +154,13 @@ int32_t CodeGenerator::published_type_from(const TypeExpr& type) const {
 
 namespace {
 
+// Name of the wrapper a call goes through when it omits an evaluated default.
+// The caller supplies `argc` arguments and the wrapper evaluates the rest.
+std::string default_wrapper_name(const std::string& function, size_t argc) {
+	return "@defaults" + std::to_string(argc) + "." +
+		(function.empty() || function[0] != '@' ? function : function.substr(1));
+}
+
 // A folded const the host can answer with. Containers are deliberately absent:
 // GDScript gives a const Array or Dictionary handle identity, and a copy built
 // host-side would be a different container than the one the guest sees. NIL and
@@ -779,6 +786,79 @@ IRProgram CodeGenerator::generate(const Program& program) {
 			--signature.required_arguments;
 	};
 
+	// A default is an expression in the callee's scope. It may name an earlier
+	// parameter or a member, as in `func f(a := 1, b := [a])`, and the caller
+	// cannot resolve those names. A call that omits such a default goes through
+	// a wrapper for that arity, which evaluates the remaining defaults in the
+	// callee. Constant defaults still fold at the call site.
+	auto default_wrappers = [&](const FunctionDecl& decl, const std::string& target,
+		const StructDecl* owner) {
+		const bool takes_self = owner != nullptr && !decl.is_static;
+		const size_t offset = takes_self ? 1 : 0;
+		size_t required = decl.parameters.size();
+		while (required && decl.parameters[required - 1].default_value) --required;
+		for (size_t supplied = required; supplied < decl.parameters.size(); ++supplied) {
+			if (decl.is_coroutine || !omits_evaluated_default(decl.parameters, supplied)) {
+				continue;
+			}
+			FunctionContext wrapper;
+			wrapper.ir.name = default_wrapper_name(target, supplied + offset);
+			wrapper.ir.source_path = owner && !owner->source_path.empty() ? owner->source_path
+				: size_t(decl.chain_link) < m_chain.paths.size()
+				? m_chain.paths[size_t(decl.chain_link)] : m_source_path;
+			m_current_function = wrapper.ir.name;
+			m_current_class = owner;
+			m_current_chain_link = decl.chain_link;
+			m_current_chain_function = decl.declared_name();
+			m_in_static_function = decl.is_static;
+			push_scope(wrapper);
+			FunctionSignature signature = build_signature(decl);
+			signature.name = wrapper.ir.name;
+			signature.parameters.resize(supplied);
+			signature.required_arguments = supplied;
+			if (takes_self) {
+				wrapper.ir.parameters.push_back("self");
+				const int self_reg = alloc_register(wrapper);
+				declare_variable(wrapper, "self", self_reg, false, nullptr, false, true);
+				set_register_type(wrapper, self_reg, Variant::DICTIONARY);
+				set_register_struct(wrapper, self_reg, owner);
+			}
+			for (size_t i = 0; i < supplied; ++i) {
+				const auto& parameter = decl.parameters[i];
+				wrapper.ir.parameters.push_back(parameter.name);
+				const int reg = alloc_register(wrapper);
+				declare_variable(wrapper, parameter.name, reg, false, nullptr, false, true);
+				apply_declared_type(reg, parameter.type_hint, wrapper);
+			}
+			std::vector<int> arguments;
+			for (size_t i = 0; i < supplied + offset; ++i) arguments.push_back(int(i));
+			// Each evaluated default is a local, so a later one can name it.
+			for (size_t i = supplied; i < decl.parameters.size(); ++i) {
+				const auto& parameter = decl.parameters[i];
+				const int value = gen_expr(parameter.default_value.get(), wrapper);
+				const int reg = alloc_register(wrapper);
+				wrapper.ir.instructions.emplace_back(IROpcode::MOVE, IRValue::reg(reg), IRValue::reg(value));
+				declare_variable(wrapper, parameter.name, reg, false, nullptr, false, true);
+				arguments.push_back(reg);
+			}
+			const int result = alloc_register(wrapper);
+			IRInstruction call(IROpcode::CALL);
+			call.operands = {ir_str(target), IRValue::reg(result), IRValue::imm(int64_t(arguments.size()))};
+			for (int argument : arguments) call.operands.push_back(IRValue::reg(argument));
+			wrapper.ir.instructions.push_back(std::move(call));
+			wrapper.ir.instructions.emplace_back(IROpcode::MOVE, IRValue::reg(0), IRValue::reg(result));
+			wrapper.ir.instructions.emplace_back(IROpcode::RETURN);
+			wrapper.ir.max_registers = std::max(wrapper.next_register, 1);
+			pop_scope(wrapper);
+			ir_program.signatures.push_back(std::move(signature));
+			ir_program.functions.push_back(std::move(wrapper.ir));
+		}
+		m_current_class = nullptr;
+		m_current_chain_link = 0;
+		m_current_chain_function.clear();
+		m_in_static_function = false;
+	};
+
 	for (const auto& decl : program.functions) {
 		ir_program.signatures.push_back(build_signature(decl));
 		complete_defaults(ir_program.signatures.back(), decl, nullptr);
@@ -791,6 +871,7 @@ IRProgram CodeGenerator::generate(const Program& program) {
 		if (decl.is_test && decl.chain_name.empty()) {
 			ir_program.tests.push_back(ir_program.signatures.back());
 		}
+		default_wrappers(decl, decl.name, nullptr);
 	}
 
 	// Inline accessor bodies (`@x_setter`/`@x_getter`, hidden from method list).
@@ -818,6 +899,7 @@ IRProgram CodeGenerator::generate(const Program& program) {
 			complete_defaults(signature, method, &decl);
 			ir_program.signatures.push_back(std::move(signature));
 			ir_program.functions.push_back(generate_function(method, &decl));
+			default_wrappers(method, lifted_method_name(decl, method.name), &decl);
 		}
 		if (m_native_classes && decl.is_class) {
 			// Script resources need the same construction path as local Class.new().
@@ -2504,7 +2586,11 @@ void CodeGenerator::gen_match(const MatchStmt* stmt, FunctionContext& func) {
 	for (size_t i = 0; i < stmt->branches.size(); i++) {
 		func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(test_labels[i]));
 
-		const int arm_scope = push_block_scope(func);
+		// Open the name scope before the test so pattern bindings belong to the
+		// arm. The scope mark goes at the body label instead. The jump table
+		// enters there without running the test, and a failed test must not
+		// leave a mark behind.
+		push_scope(func);
 		if (!table_is_complete) {
 			const std::string& next_label =
 				i + 1 < stmt->branches.size() ? test_labels[i + 1] : end_label;
@@ -2512,6 +2598,7 @@ void CodeGenerator::gen_match(const MatchStmt* stmt, FunctionContext& func) {
 		}
 
 		func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(body_labels[i]));
+		const int arm_scope = open_scope(func);
 		if (narrowed_reg >= 0 || narrowed_global_idx != SIZE_MAX) {
 			TypeSet accepted = arm_narrowing(stmt->branches[i]);
 			if (stmt->branches[i].is_catch_all()) {
@@ -3517,7 +3604,10 @@ void CodeGenerator::gen_array_walk(const ForStmt* stmt, int array_reg, FunctionC
 		IRValue::imm(0)).type_hint = Variant::INT;
 	func.ir.instructions.emplace_back(IROpcode::JUMP, ir_label(refill_label));
 	func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(end_label));
-	emit_scope_release(body_scope, func);
+	// Release only the batch scope. An empty first batch branches here before
+	// the body scope is marked, and releasing an unmarked scope would release
+	// every owner in the frame. The batch mark is taken on every path and sits
+	// at or below the body mark, so this release also covers the body and break.
 	emit_scope_release(batch_scope, func);
 
 	pop_scope(func);
@@ -3805,7 +3895,10 @@ void CodeGenerator::gen_string_walk(const ForStmt* stmt, int string_reg, Functio
 	emit_conditional_branch(IROpcode::BRANCH_NOT_ZERO, left_reg, have_label, func);
 	func.ir.instructions.emplace_back(IROpcode::JUMP, ir_label(refill_label));
 	func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(end_label));
-	emit_scope_release(body_scope, func);
+	// Release only the batch scope. An empty first batch branches here before
+	// the body scope is marked, and releasing an unmarked scope would release
+	// every owner in the frame. The batch mark is taken on every path and sits
+	// at or below the body mark, so this release also covers the body and break.
 	emit_scope_release(batch_scope, func);
 
 	pop_scope(func);
@@ -5503,8 +5596,10 @@ int CodeGenerator::gen_binary(const BinaryExpr* expr, FunctionContext& func) {
 		const int value_reg = left_type == Variant::NIL ? right_reg : left_reg;
 		const IRInstruction::TypeHint value_type = get_register_type(func, value_reg);
 		const StructDecl* value_class = get_register_struct(func, value_reg);
+		// A class annotation backed by a Dictionary also admits null. It only
+		// guides dispatch and does not prove that a parameter holds an instance.
 		if (value_type == IRInstruction::TypeHint_NONE || value_type == Variant::OBJECT ||
-			(m_native_classes && value_class != nullptr && value_class->is_class)) {
+			(value_class != nullptr && value_class->is_class)) {
 			func.ir.instructions.emplace_back(expr->op == BinaryExpr::Op::EQ
 				? IROpcode::CMP_EQ : IROpcode::CMP_NEQ, IRValue::reg(result_reg),
 				IRValue::reg(left_reg), IRValue::reg(right_reg));
@@ -5856,6 +5951,40 @@ int CodeGenerator::gen_class_test(int value_reg, const std::string& class_name,
 	const std::string end_label = make_label("is_class_end");
 	if (known != Variant::OBJECT) {
 		emit_is_object(object_reg, end_label);
+	}
+
+	// Handles `x is Tool` where `const Tool = preload("tool.sgd")`. That script
+	// has no global name to compare, so the script chain is compared by identity
+	// against the constant's value, as GDScript does.
+	if (is_global_const(class_name) && find_struct(class_name) == nullptr &&
+		m_global_const_values.find(class_name) == m_global_const_values.end()) {
+		VariableExpr target_expr(class_name);
+		const int target_reg = gen_expr(&target_expr, func);
+		int script_reg = alloc_register(func);
+		emit_vcall(script_reg, object_reg, "get_script", -1);
+		const std::string loop_label = make_label("is_script_chain");
+		func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(loop_label));
+		emit_is_object(script_reg, end_label);
+		// Use is_same() instead of CMP_EQ. The host decides identity, and a guest
+		// can hold two different handles to the same object.
+		const int same_reg = gen_global_call(*find_global_function("is_same"), { script_reg, target_reg }, func, nullptr);
+		func.ir.instructions.emplace_back(IROpcode::MOVE, IRValue::reg(result_reg), IRValue::reg(same_reg));
+		free_register(func, same_reg);
+		set_register_type(func, result_reg, Variant::BOOL);
+		emit_conditional_branch(IROpcode::BRANCH_NOT_ZERO, result_reg, end_label, func);
+		int base_reg = alloc_register(func);
+		emit_vcall(base_reg, script_reg, "get_base_script", -1);
+		func.ir.instructions.emplace_back(IROpcode::MOVE, IRValue::reg(script_reg),
+			IRValue::reg(base_reg));
+		free_register(func, base_reg);
+		func.ir.instructions.emplace_back(IROpcode::JUMP, ir_label(loop_label));
+		free_register(func, script_reg);
+		free_register(func, target_reg);
+		func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(end_label));
+		if (owns_object_reg) {
+			free_register(func, object_reg);
+		}
+		return result_reg;
 	}
 
 	const int name_index = add_string_constant(class_name);
@@ -6312,18 +6441,27 @@ int CodeGenerator::emit_local_call(const std::string& name, std::vector<int> arg
 	FunctionContext& func, const Expr* site)
 {
 	auto sig = m_local_signatures.find(name);
+	std::string target = name;
 	if (sig != m_local_signatures.end()) {
 		const auto& params = sig->second->parameters;
 		if (arg_regs.size() > params.size()) {
 			error_at("Too many arguments to '" + name + "': expected at most " +
 				std::to_string(params.size()) + ", got " + std::to_string(arg_regs.size()), site);
 		}
-		for (size_t i = arg_regs.size(); i < params.size(); i++) {
+		const size_t supplied = arg_regs.size();
+		const bool through_wrapper = !sig->second->is_coroutine &&
+			omits_evaluated_default(params, supplied);
+		if (through_wrapper) {
+			target = default_wrapper_name(name, supplied);
+		}
+		for (size_t i = supplied; i < params.size(); i++) {
 			if (!params[i].default_value) {
 				error_at("Missing argument '" + params[i].name + "' in call to '" +
 					name + "'", site);
 			}
-			arg_regs.push_back(gen_expr(params[i].default_value.get(), func));
+			if (!through_wrapper) {
+				arg_regs.push_back(gen_expr(params[i].default_value.get(), func));
+			}
 		}
 	}
 
@@ -6336,13 +6474,13 @@ int CodeGenerator::emit_local_call(const std::string& name, std::vector<int> arg
 	}
 
 	IRInstruction call_instr(hosted ? IROpcode::CALL_HOSTED : IROpcode::CALL);
-	call_instr.operands.push_back(ir_str(name));
+	call_instr.operands.push_back(ir_str(target));
 	call_instr.operands.push_back(IRValue::reg(result_reg));
 	call_instr.operands.push_back(IRValue::imm(arg_regs.size()));
 	for (int arg_reg : arg_regs) {
 		call_instr.operands.push_back(IRValue::reg(arg_reg));
 	}
-	if (!hosted && sig != m_local_signatures.end()) {
+	if (!hosted && sig != m_local_signatures.end() && target == name) {
 		bool has_typed_parameter = false;
 		bool exact_typed_arguments = true;
 		const auto& params = sig->second->parameters;
@@ -8971,12 +9109,20 @@ int CodeGenerator::gen_class_method_call(const StructDecl& decl, const FunctionD
 	for (const auto& argument : arguments) {
 		arg_regs.push_back(gen_expr(argument.get(), func));
 	}
+	std::string target = lifted_method_name(owner, method.name);
+	const bool through_wrapper = !method.is_coroutine &&
+		omits_evaluated_default(method.parameters, arguments.size());
+	if (through_wrapper) {
+		target = default_wrapper_name(target, arguments.size() + (method.is_static ? 0 : 1));
+	}
 	for (size_t i = arguments.size(); i < method.parameters.size(); i++) {
 		if (!method.parameters[i].default_value) {
 			error_at("Missing argument '" + method.parameters[i].name + "' in call to '" +
 				decl.name + "." + method.name + "()'", site);
 		}
-		arg_regs.push_back(gen_expr(method.parameters[i].default_value.get(), func));
+		if (!through_wrapper) {
+			arg_regs.push_back(gen_expr(method.parameters[i].default_value.get(), func));
+		}
 	}
 
 	int result_reg = alloc_register(func);
@@ -8999,7 +9145,7 @@ int CodeGenerator::gen_class_method_call(const StructDecl& decl, const FunctionD
 		func.ir.instructions.push_back(std::move(call));
 	} else {
 		IRInstruction call(method.is_coroutine ? IROpcode::CALL_HOSTED : IROpcode::CALL);
-		call.operands.push_back(ir_str(lifted_method_name(owner, method.name)));
+		call.operands.push_back(ir_str(target));
 		call.operands.push_back(IRValue::reg(result_reg));
 		call.operands.push_back(IRValue::imm(int64_t(arg_regs.size())));
 		for (int reg : arg_regs) call.operands.push_back(IRValue::reg(reg));
@@ -11111,6 +11257,23 @@ static bool fold_constant_binary(BinaryExpr::Op op, const IRGlobalVar& lhs,
 		case Op::OR:
 		case Op::COALESCE: // Answered above, before either side is inspected.
 		case Op::IN: return false;
+	}
+	return false;
+}
+
+bool CodeGenerator::omits_evaluated_default(const std::vector<Parameter>& params,
+	size_t supplied) const
+{
+	using InitType = IRGlobalVar::InitType;
+	for (size_t i = supplied; i < params.size(); ++i) {
+		if (!params[i].default_value) {
+			continue;
+		}
+		IRGlobalVar folded;
+		if (!fold_global_initializer(params[i].default_value.get(), folded) ||
+			folded.init_type == InitType::NONE || folded.init_type == InitType::RUNTIME) {
+			return true;
+		}
 	}
 	return false;
 }

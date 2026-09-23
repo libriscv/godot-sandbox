@@ -66,6 +66,7 @@ public:
 		check_labels();
 		check_coroutine();
 		check_definedness_and_types();
+		check_scope_marks();
 	}
 
 private:
@@ -327,6 +328,68 @@ private:
 			}
 			RegisterState state = block.entry;
 			transfer(block, state, /*report=*/true);
+		}
+	}
+
+	// A SCOPE_RELEASE whose SCOPE_MARK has not run on some path releases to
+	// whatever the scope variable held. On the native backend that is zero,
+	// which releases every owner of the frame and its callers. This is a must
+	// analysis over the blocks built by check_definedness_and_types. A scope
+	// counts as marked on entry to a block only when every reachable
+	// predecessor marked it.
+	void check_scope_marks() {
+		const size_t count = m_blocks.size();
+		if (count == 0) {
+			return;
+		}
+		std::vector<std::unordered_set<int64_t>> entry(count);
+		std::vector<bool> seen(count, false);
+		auto transfer = [&](size_t b, std::unordered_set<int64_t> marked, bool report) {
+			for (size_t i = m_blocks[b].begin; i < m_blocks[b].end; i++) {
+				const IRInstruction& instr = m_func.instructions[i];
+				if (instr.opcode == IROpcode::SCOPE_MARK) {
+					marked.insert(instr.operands[0].immediate());
+				} else if (report && instr.opcode == IROpcode::SCOPE_RELEASE &&
+						marked.count(instr.operands[0].immediate()) == 0) {
+					fail("scope " + std::to_string(instr.operands[0].immediate()) +
+						" is released on a path where it was never marked", i);
+				}
+			}
+			return marked;
+		};
+		std::queue<size_t> worklist;
+		seen[0] = true;
+		worklist.push(0);
+		while (!worklist.empty()) {
+			const size_t b = worklist.front();
+			worklist.pop();
+			const std::unordered_set<int64_t> out = transfer(b, entry[b], false);
+			for (size_t successor : m_blocks[b].successors) {
+				if (!seen[successor]) {
+					seen[successor] = true;
+					entry[successor] = out;
+					worklist.push(successor);
+					continue;
+				}
+				// A scope stays marked only if this path marked it too.
+				bool changed = false;
+				for (auto it = entry[successor].begin(); it != entry[successor].end();) {
+					if (out.count(*it) == 0) {
+						it = entry[successor].erase(it);
+						changed = true;
+					} else {
+						++it;
+					}
+				}
+				if (changed) {
+					worklist.push(successor);
+				}
+			}
+		}
+		for (size_t b = 0; b < count; b++) {
+			if (seen[b]) {
+				transfer(b, entry[b], true);
+			}
 		}
 	}
 

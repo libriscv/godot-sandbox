@@ -1275,6 +1275,27 @@ func test():
 		x = t
 	return total
 )" },
+		// The type hint of a comparison names its operands. The residency planner
+		// took it for the result type, so the exit test of a float loop landed
+		// in a float register and the function returned 0.0 instead of true.
+		{ "float_loop_comparison_result", R"(
+func test() -> bool:
+	var total := 0.0
+	for y in range(0.0, 5):
+		for x in range(5):
+			total += x + y
+	return total == 100.0
+)" },
+		// A default naming an earlier parameter is evaluated in the callee,
+		// never the caller, even when the caller has a local of that name.
+		{ "default_names_an_earlier_parameter", R"(
+func f(a := 1, b := a + 10):
+	return a * 100 + b
+
+func test():
+	var a = 5
+	return f() * 10000 + f(2)
+)" },
 	};
 	return programs;
 }

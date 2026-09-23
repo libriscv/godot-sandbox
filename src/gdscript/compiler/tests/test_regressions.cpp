@@ -1024,6 +1024,63 @@ func still_null():
 	assert(!rejects("func test():\n\tvar n: Node3D = null\n\tn = self\n\treturn n\n"));
 }
 
+// A default is an expression in the callee's scope. It used to be evaluated at
+// the call site in the caller's scope. A default naming an earlier parameter
+// then failed to compile or silently read a caller's local of the same name.
+static void test_defaults_are_evaluated_in_the_callees_scope() {
+	const std::string source = R"(
+func f(a := 1, b := a + 10):
+	return a * 100 + b
+
+func shadowed():
+	var a = 5
+	return f()
+
+func supplied():
+	var a = 5
+	return f(2) * 1000 + f(3, 4)
+
+class Box:
+	static func scaled(a := 3, b := a * 2):
+		return a + b
+	static func call_it():
+		return scaled() * 100 + scaled(1)
+)";
+	assert(run_int(source, "shadowed") == 111);
+	assert(run_int(source, "supplied") == 212 * 1000 + 304);
+	assert(run_int(source, "@Box.call_it") == 9 * 100 + 3);
+
+	// Constant defaults still fold at the call site without a wrapper or an extra call.
+	const IRProgram ir = compile_to_ir(
+		"func g(a := 1, b := 2):\n\treturn a + b\n"
+		"func caller():\n\treturn g()\n");
+	for (const auto& func : ir.functions) {
+		assert(func.name.rfind("@defaults", 0) != 0);
+	}
+
+	// A method's default may read the receiver's fields.
+	const IRProgram members = compile_to_ir(R"(
+class Box:
+	var base := 7
+	func get_v(extra := base):
+		return extra
+func test():
+	var base = 1
+	return Box.new().get_v()
+)");
+	const IRFunction& wrapper = find_function(members, "@defaults1.Box.get_v");
+	assert(wrapper.parameters.size() == 1 && wrapper.parameters[0] == "self");
+	bool calls_wrapper = false;
+	for (const auto& instr : find_function(members, "test").instructions) {
+		if (instr.opcode == IROpcode::CALL &&
+			members.strings[instr.operands[0].string_id] == "@defaults1.Box.get_v") {
+			calls_wrapper = true;
+		}
+	}
+	assert(calls_wrapper);
+	std::cout << "  \u2713 Defaults are evaluated in the callee's scope" << std::endl;
+}
+
 int main() {
 	std::cout << "=== Compiler Regression Tests ===" << std::endl << std::endl;
 
@@ -1047,6 +1104,7 @@ int main() {
 	test_vector_int_float_conversion();
 	test_break_after_a_nested_batched_loop();
 	test_class_typed_local_that_starts_null();
+	test_defaults_are_evaluated_in_the_callees_scope();
 
 	std::cout << std::endl << "All regression tests passed!" << std::endl;
 	return 0;

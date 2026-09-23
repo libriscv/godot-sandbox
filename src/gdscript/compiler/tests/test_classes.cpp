@@ -2,6 +2,7 @@
 #include "../codegen.h"
 #include "../compiler.h"
 #include "../compiler_exception.h"
+#include "../ir_interpreter.h"
 #include "../ir_optimizer.h"
 #include "../lexer.h"
 #include "../parser.h"
@@ -1812,6 +1813,18 @@ void test_null_object_comparisons_use_variant_equality() {
 	const IRFunction* scalar = find_function(ir, "scalar");
 	check(scalar != nullptr && count_opcode(*scalar, IROpcode::CMP_EQ) == 0,
 		"proven non-object null comparison still folds");
+
+	// A class annotation admits null in the Sandbox too, where an instance is a
+	// Dictionary. The type tag does not tell whether a parameter holds one.
+	const std::string nullable_class =
+		"class Row:\n\tvar value: int = 7\n"
+		"func null_class(value: Row):\n"
+		"\treturn value == null and null == value and not (value != null)\n";
+	const IRProgram classes = compile_to_ir(nullable_class);
+	IRInterpreter interpreter(classes);
+	const IRInterpreter::Value answer = interpreter.call("null_class", { std::monostate{} });
+	check(std::holds_alternative<bool>(answer) && std::get<bool>(answer),
+		"a null class-typed parameter equals null");
 }
 
 } // namespace

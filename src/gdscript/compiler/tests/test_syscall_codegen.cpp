@@ -119,7 +119,9 @@ int main(int argc, char** argv) try {
 	for (auto [number, op, inputs, outputs] : expected)
 		if (!found.count({number, inputs, outputs}))
 			throw std::runtime_error("missing compiler lowering " + std::to_string(number) + "/" + std::to_string(inputs) + "/" + std::to_string(outputs));
-	for (unsigned number : {ECALL_UTILITY, ECALL_BREAKPOINT, ECALL_VSCOPE})
+	// THROW stays a full ECALL because a decoded custom instruction enters its
+	// handler without publishing PC, and an assertion reports its line from PC.
+	for (unsigned number : {ECALL_UTILITY, ECALL_BREAKPOINT, ECALL_VSCOPE, ECALL_THROW})
 		require(ecalls.count(number), "missing required full-state ECALL");
 	for (unsigned number : {ECALL_VCREATE, ECALL_ARRAY_AT})
 		require(!ecalls.count(number), "eligible syscall still lowered to ECALL");
