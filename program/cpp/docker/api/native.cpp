@@ -1,7 +1,8 @@
 #include "syscalls.h"
-#include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 
 #define NATIVE_MEM_FUNCATTR /* */
 #define NATIVE_SYSCALLS_BASE 480 /* libc starts at 480 */
@@ -57,8 +58,8 @@
 #if !WRAP_FANCY
 CREATE_SYSCALL(malloc, SYSCALL_MALLOC);
 CREATE_SYSCALL(calloc, SYSCALL_CALLOC);
-CREATE_SYSCALL(realloc, SYSCALL_REALLOC);
-CREATE_SYSCALL(free, SYSCALL_FREE);
+CREATE_SYSCALL(__sandbox_realloc, SYSCALL_REALLOC);
+CREATE_SYSCALL(__sandbox_free, SYSCALL_FREE);
 CREATE_SYSCALL(memset, SYSCALL_MEMSET);
 CREATE_SYSCALL(memcpy, SYSCALL_MEMCPY);
 CREATE_SYSCALL(memmove, SYSCALL_MEMMOVE);
@@ -77,20 +78,16 @@ extern "C" void *__wrap_malloc(size_t size) {
 				 : "r"(a0), "r"(syscall_id));
 	return ret;
 }
+extern "C" void free(void *ptr);
 extern "C" void __wrap_free(void *ptr) {
-	register void *a0 __asm__("a0") = ptr;
-	register long syscall_id __asm__("a7") = SYSCALL_FREE;
-
-	asm volatile("ecall"
-				 :
-				 : "r"(a0), "r"(syscall_id));
+	free(ptr);
 }
 #else // WRAP_FANCY
 
 CREATE_SYSCALL(__wrap_malloc, SYSCALL_MALLOC);
 CREATE_SYSCALL(__wrap_calloc, SYSCALL_CALLOC);
-CREATE_SYSCALL(__wrap_realloc, SYSCALL_REALLOC);
-CREATE_SYSCALL(__wrap_free, SYSCALL_FREE);
+CREATE_SYSCALL(__sandbox_realloc, SYSCALL_REALLOC);
+CREATE_SYSCALL(__sandbox_free, SYSCALL_FREE);
 CREATE_SYSCALL(__wrap_memset, SYSCALL_MEMSET);
 CREATE_SYSCALL(__wrap_memcpy, SYSCALL_MEMCPY);
 CREATE_SYSCALL(__wrap_memmove, SYSCALL_MEMMOVE);
@@ -103,6 +100,9 @@ CREATE_SYSCALL(__wrap_strncmp, SYSCALL_STRCMP);
 extern "C" void *__wrap_malloc(size_t size);
 extern "C" void __wrap_free(void *ptr);
 #endif // WRAP_FANCY
+
+extern "C" void *__sandbox_realloc(void *ptr, size_t size);
+extern "C" void __sandbox_free(void *ptr);
 
 // extern "C" void *__wrap_memset(void *vdest, const int ch, size_t size) {
 // 	register char *a0 __asm__("a0") = (char *)vdest;
@@ -193,44 +193,148 @@ extern "C" void __wrap_free(void *ptr);
 // 	return a0_out;
 // }
 
-// Fallback implementation of aligned allocations
+// The host heap only frees the exact pointer it returned, so over-aligned
+// blocks are carved out of a larger one and their base is kept here.
+namespace {
+struct AlignedBlock {
+	uintptr_t ptr;
+	void *base;
+	size_t size;
+};
+AlignedBlock *aligned_table = nullptr;
+size_t aligned_capacity = 0;
+size_t aligned_count = 0;
+
+size_t aligned_slot(uintptr_t ptr) {
+	return size_t(uint64_t(ptr >> 5) * 0x9E3779B97F4A7C15ull >> 32) & (aligned_capacity - 1);
+}
+
+AlignedBlock *aligned_find(uintptr_t ptr) {
+	for (size_t i = aligned_slot(ptr);; i = (i + 1) & (aligned_capacity - 1)) {
+		if (aligned_table[i].ptr == 0) {
+			return nullptr;
+		}
+		if (aligned_table[i].ptr == ptr) {
+			return &aligned_table[i];
+		}
+	}
+}
+
+void aligned_place(const AlignedBlock &block) {
+	size_t i = aligned_slot(block.ptr);
+	while (aligned_table[i].ptr != 0) {
+		i = (i + 1) & (aligned_capacity - 1);
+	}
+	aligned_table[i] = block;
+}
+
+bool aligned_insert(uintptr_t ptr, void *base, size_t size) {
+	if ((aligned_count + 1) * 2 > aligned_capacity) {
+		const size_t capacity = aligned_capacity ? aligned_capacity * 2 : 64;
+		AlignedBlock *table = static_cast<AlignedBlock *>(__wrap_malloc(capacity * sizeof(AlignedBlock)));
+		if (table == nullptr) {
+			return false;
+		}
+		for (size_t i = 0; i < capacity; i++) {
+			table[i].ptr = 0;
+		}
+		AlignedBlock *old = aligned_table;
+		const size_t old_capacity = aligned_capacity;
+		aligned_table = table;
+		aligned_capacity = capacity;
+		for (size_t i = 0; i < old_capacity; i++) {
+			if (old[i].ptr != 0) {
+				aligned_place(old[i]);
+			}
+		}
+		__sandbox_free(old);
+	}
+	aligned_place({ ptr, base, size });
+	aligned_count++;
+	return true;
+}
+
+// Backward-shift deletion keeps probe chains intact without tombstones.
+void *aligned_erase(AlignedBlock *block) {
+	void *base = block->base;
+	const size_t mask = aligned_capacity - 1;
+	size_t hole = block - aligned_table;
+	for (size_t i = (hole + 1) & mask; aligned_table[i].ptr != 0; i = (i + 1) & mask) {
+		const size_t home = aligned_slot(aligned_table[i].ptr);
+		if (((i - home) & mask) >= ((i - hole) & mask)) {
+			aligned_table[hole] = aligned_table[i];
+			hole = i;
+		}
+	}
+	aligned_table[hole].ptr = 0;
+	aligned_count--;
+	return base;
+}
+} // namespace
+
+#if WRAP_FANCY
+#define SANDBOX_FREE __wrap_free
+#define SANDBOX_REALLOC __wrap_realloc
+#else
+#define SANDBOX_FREE free
+#define SANDBOX_REALLOC realloc
+#endif
+
+extern "C" void SANDBOX_FREE(void *ptr) {
+	if (aligned_count != 0) {
+		if (AlignedBlock *block = aligned_find(uintptr_t(ptr))) {
+			ptr = aligned_erase(block);
+		}
+	}
+	__sandbox_free(ptr);
+}
+
+extern "C" void *SANDBOX_REALLOC(void *ptr, size_t size) {
+	if (aligned_count != 0) {
+		if (AlignedBlock *block = aligned_find(uintptr_t(ptr))) {
+			void *result = __wrap_malloc(size);
+			if (result == nullptr) {
+				return nullptr;
+			}
+			std::memcpy(result, ptr, block->size < size ? block->size : size);
+			__sandbox_free(aligned_erase(block));
+			return result;
+		}
+	}
+	return __sandbox_realloc(ptr, size);
+}
+
 extern "C" void *memalign(size_t alignment, size_t size) {
 	if (alignment <= 16) {
 		return __wrap_malloc(size);
 	}
-
-	std::array<void *, 16> list;
-	size_t i = 0;
-	void *result = nullptr;
-	for (i = 0; i < list.size(); i++) {
-		result = __wrap_malloc(size);
-		list[i] = result;
-		const bool aligned = ((uintptr_t)result % alignment) == 0;
-		if (result && aligned) {
-			break;
-		} else if (result) {
-			__wrap_free(result);
-			list[i] = __wrap_malloc(16);
-		} else {
-			result = nullptr;
-			break;
-		}
+	if ((alignment & (alignment - 1)) != 0 || size > SIZE_MAX - alignment) {
+		return nullptr;
 	}
-	for (size_t j = 0; j < i; j++) {
-		__wrap_free(list[j]);
+	void *base = __wrap_malloc(size + alignment - 1);
+	if (base == nullptr) {
+		return nullptr;
 	}
-	return result;
+	const uintptr_t ptr = (uintptr_t(base) + alignment - 1) & ~uintptr_t(alignment - 1);
+	if (ptr != uintptr_t(base) && !aligned_insert(ptr, base, size)) {
+		__sandbox_free(base);
+		return nullptr;
+	}
+	return reinterpret_cast<void *>(ptr);
 }
 extern "C" void *aligned_alloc(size_t alignment, size_t size) {
 	return memalign(alignment, size);
 }
 extern "C" int posix_memalign(void **memptr, size_t alignment, size_t size) {
-	void *result = memalign(alignment, size);
-	if (result) {
-		*memptr = result;
-		return 0;
+	if (alignment < sizeof(void *) || (alignment & (alignment - 1)) != 0) {
+		return EINVAL;
 	}
-	return 1;
+	void *result = memalign(alignment, size);
+	if (result == nullptr) {
+		return ENOMEM;
+	}
+	*memptr = result;
+	return 0;
 }
 
 void *operator new(size_t size) noexcept(false) {

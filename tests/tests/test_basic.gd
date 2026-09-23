@@ -1109,3 +1109,11 @@ func test_read_only_containers_survive_a_forged_type_tag():
 	assert_eq(a, ["original"], "the Array was left alone")
 
 	s.queue_free()
+
+func test_aligned_allocations():
+	var s : Sandbox = Sandbox.new()
+	s.set_program(Sandbox_TestsTests)
+	for alignment in [32, 64, 4096]:
+		assert_true(s.vmcall("test_aligned_allocations", alignment, 64), "alignment %d" % alignment)
+	assert_eq(s.get_exceptions(), 0)
+	s.queue_free()

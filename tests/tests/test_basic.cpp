@@ -1,4 +1,7 @@
 #include "api.hpp"
+#include <cstdlib>
+#include <cstring>
+#include <vector>
 
 struct MyException : public std::exception {
 	using std::exception::exception;
@@ -747,4 +750,33 @@ PUBLIC Variant readonly_tag_spoof(Variant container, Variant method) {
 	__builtin_memcpy(&spoofed, &tag, sizeof(tag));
 	spoofed.method_call(method.operator std::string());
 	return "the mutation was not denied";
+}
+
+struct alignas(64) Aligned64 {
+	char data[200];
+};
+PUBLIC Variant test_aligned_allocations(int alignment, int count) {
+	std::vector<void *> blocks;
+	for (int i = 0; i < count; i++) {
+		void *p = nullptr;
+		if (posix_memalign(&p, alignment, 100 + i) != 0 || uintptr_t(p) % alignment != 0)
+			return false;
+		memset(p, i, 100 + i);
+		blocks.push_back(p);
+	}
+	for (int i = 0; i < count; i += 2) {
+		unsigned char *p = (unsigned char *)realloc(blocks[i], 300 + i);
+		if (p == nullptr || p[99] != (unsigned char)i)
+			return false;
+		blocks[i] = p;
+	}
+	for (void *p : blocks)
+		free(p);
+	for (int i = 0; i < count; i++) {
+		Aligned64 *a = new Aligned64;
+		if (uintptr_t(a) % 64 != 0)
+			return false;
+		delete a;
+	}
+	return true;
 }
