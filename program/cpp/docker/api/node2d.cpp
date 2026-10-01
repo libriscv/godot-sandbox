@@ -23,10 +23,10 @@ void Node2D::set_position(const Vector2 &position) {
 	node2d(Node2D_Op::SET_POSITION, address(), value);
 }
 
-float Node2D::get_rotation() const {
+real_t Node2D::get_rotation() const {
 	Variant var;
 	node2d(Node2D_Op::GET_ROTATION, address(), var);
-	return var.operator float();
+	return var.operator real_t();
 }
 
 void Node2D::set_rotation(real_t angle) {
@@ -45,10 +45,10 @@ void Node2D::set_scale(const Vector2 &scale) {
 	node2d(Node2D_Op::SET_SCALE, address(), value);
 }
 
-float Node2D::get_skew() const {
+real_t Node2D::get_skew() const {
 	Variant var;
 	node2d(Node2D_Op::GET_SKEW, address(), var);
-	return var.operator float();
+	return var.operator real_t();
 }
 
 void Node2D::set_skew(const Variant &value) {

@@ -120,6 +120,9 @@ add_library(sandbox_api STATIC ${API_SOURCES})
 target_compile_definitions(sandbox_api PUBLIC
 	VERSION=${VERSION}
 )
+if (DOUBLE_PRECISION)
+	target_compile_definitions(sandbox_api PUBLIC DOUBLE_PRECISION_REAL_T)
+endif()
 target_compile_options(sandbox_api PUBLIC
 	${RISCV_ARCH} ${RISCV_ABI}
 	$<$<COMPILE_LANGUAGE:CXX>:${CXXFLAGS}>

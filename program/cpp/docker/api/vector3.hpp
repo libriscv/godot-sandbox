@@ -7,15 +7,15 @@ struct Vector3 {
 	real_t y;
 	real_t z;
 
-	float length() const noexcept;
-	float length_squared() const noexcept { return this->dot(*this); }
+	real_t length() const noexcept;
+	real_t length_squared() const noexcept { return this->dot(*this); }
 	void normalize() { *this = normalized(); }
 	Vector3 normalized() const noexcept;
-	float dot(const Vector3& other) const noexcept;
+	real_t dot(const Vector3& other) const noexcept;
 	Vector3 cross(const Vector3& other) const noexcept;
-	float distance_to(const Vector3& other) const noexcept;
-	float distance_squared_to(const Vector3& other) const noexcept;
-	float angle_to(const Vector3& other) const noexcept;
+	real_t distance_to(const Vector3& other) const noexcept;
+	real_t distance_squared_to(const Vector3& other) const noexcept;
+	real_t angle_to(const Vector3& other) const noexcept;
 	Vector3 direction_to(const Vector3& other) const noexcept;
 	Vector3 floor() const noexcept;
 
@@ -144,9 +144,9 @@ inline constexpr auto operator / (const Vector3& a, real_t b) noexcept {
 
 inline Vector3 Vector3::floor() const noexcept {
 	register const Vector3 *vptr asm("a0") = this;
-	register float resultX asm("fa0");
-	register float resultY asm("fa1");
-	register float resultZ asm("fa2");
+	register real_t resultX asm("fa0");
+	register real_t resultY asm("fa1");
+	register real_t resultZ asm("fa2");
 	register int op asm("a2") = 11; // Vec3_Op::FLOOR
 	register int syscall asm("a7") = 537; // ECALL_VEC3_OPS
 

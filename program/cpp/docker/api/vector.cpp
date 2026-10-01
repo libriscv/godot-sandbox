@@ -54,10 +54,10 @@ Vector2 Vector2::project(const Vector2 &by) const noexcept {
 	return result;
 }
 
-float Vector3::length() const noexcept {
+real_t Vector3::length() const noexcept {
 	register const Vector3 *vptr asm("a0") = this;
 	register int op asm("a2") = int(Vec3_Op::LENGTH);
-	register float length asm("fa0");
+	register real_t length asm("fa0");
 	register int syscall asm("a7") = ECALL_VEC3_OPS;
 
 	__asm__ volatile("ecall"
@@ -80,11 +80,11 @@ Vector3 Vector3::normalized() const noexcept {
 	return result;
 }
 
-float Vector3::dot(const Vector3 &other) const noexcept {
+real_t Vector3::dot(const Vector3 &other) const noexcept {
 	register const Vector3 *vptr asm("a0") = this;
 	register const Vector3 *otherptr asm("a1") = &other;
 	register int op asm("a2") = int(Vec3_Op::DOT);
-	register float dot asm("fa0");
+	register real_t dot asm("fa0");
 	register int syscall asm("a7") = ECALL_VEC3_OPS;
 
 	__asm__ volatile("ecall"
@@ -108,11 +108,11 @@ Vector3 Vector3::cross(const Vector3 &other) const noexcept {
 	return result;
 }
 
-float Vector3::distance_to(const Vector3 &other) const noexcept {
+real_t Vector3::distance_to(const Vector3 &other) const noexcept {
 	register const Vector3 *vptr asm("a0") = this;
 	register const Vector3 *otherptr asm("a1") = &other;
 	register int op asm("a2") = int(Vec3_Op::DISTANCE_TO);
-	register float distance asm("fa0");
+	register real_t distance asm("fa0");
 	register int syscall asm("a7") = ECALL_VEC3_OPS;
 
 	__asm__ volatile("ecall"
@@ -121,24 +121,24 @@ float Vector3::distance_to(const Vector3 &other) const noexcept {
 	return distance;
 }
 
-float Vector3::distance_squared_to(const Vector3 &other) const noexcept {
+real_t Vector3::distance_squared_to(const Vector3 &other) const noexcept {
 	register const Vector3 *vptr asm("a0") = this;
 	register const Vector3 *otherptr asm("a1") = &other;
 	register int op asm("a2") = int(Vec3_Op::DISTANCE_SQ_TO);
-	register float distance asm("fa0");
+	register real_t distance asm("fa0");
 	register int syscall asm("a7") = ECALL_VEC3_OPS;
 
 	__asm__ volatile("ecall"
 					 : "=f"(distance)
 					 : "r"(op), "r"(vptr), "m"(*vptr), "r"(otherptr), "m"(*otherptr), "r"(syscall));
-	return float(distance);
+	return distance;
 }
 
-float Vector3::angle_to(const Vector3 &other) const noexcept {
+real_t Vector3::angle_to(const Vector3 &other) const noexcept {
 	register const Vector3 *vptr asm("a0") = this;
 	register const Vector3 *otherptr asm("a1") = &other;
 	register int op asm("a2") = int(Vec3_Op::ANGLE_TO);
-	register float angle asm("fa0");
+	register real_t angle asm("fa0");
 	register int syscall asm("a7") = ECALL_VEC3_OPS;
 
 	__asm__ volatile("ecall"
@@ -153,5 +153,10 @@ Vector3 Vector3::direction_to(const Vector3 &other) const noexcept {
 	return ret;
 }
 
+#ifdef DOUBLE_PRECISION_REAL_T
+static_assert(sizeof(Vector3) == 24, "Vector3 size mismatch (double)");
+static_assert(alignof(Vector3) == 8, "Vector3 alignment mismatch (double)");
+#else
 static_assert(sizeof(Vector3) == 12, "Vector3 size mismatch");
 static_assert(alignof(Vector3) == 4, "Vector3 alignment mismatch");
+#endif

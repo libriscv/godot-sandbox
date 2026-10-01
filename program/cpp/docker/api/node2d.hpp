@@ -38,7 +38,7 @@ struct Node2D : public CanvasItem {
 
 	/// @brief Get the skew of the node.
 	/// @return The skew of the node.
-	float get_skew() const;
+	real_t get_skew() const;
 	/// @brief Set the skew of the node.
 	/// @param value The new skew of the node.
 	void set_skew(const Variant &value);
