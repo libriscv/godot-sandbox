@@ -569,6 +569,10 @@ void IRInterpreter::execute_instruction(const IRFunction& func, const IRInstruct
 		case IROpcode::MAKE_SCOPED:
 		case IROpcode::BATCH_GET:
 		case IROpcode::CODEPOINT_GET:
+		case IROpcode::WINDOW_OPEN:
+		case IROpcode::WINDOW_GET:
+		case IROpcode::WINDOW_SET:
+		case IROpcode::WINDOW_FLUSH:
 		case IROpcode::GET_NODE:
 		case IROpcode::LOAD_RESOURCE:
 		case IROpcode::LOAD_RESOURCE_VAR:

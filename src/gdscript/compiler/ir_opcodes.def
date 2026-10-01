@@ -285,6 +285,26 @@ IR_OPCODE(CONSTRUCT,       "CONSTRUCT",       SIG(DST, IMM, CNT, SRC_LIST),  IR_
 IR_OPCODE(ARRAY_GET,       "ARRAY_GET",       SIG(DST, SRC, SRC), IR_SIDE_EFFECTS)
 IR_OPCODE(ARRAY_SET,       "ARRAY_SET",       SIG(SRC, SRC, SRC), IR_SIDE_EFFECTS)
 
+// -= Typed array windows =-
+//
+// A loop that touches a typed array only through `a[k]` reads and writes up to
+// 256 raw elements in a frame buffer, so an element costs a bounds compare and
+// a load rather than an ecall. The immediate is a token naming the window in
+// IRFunction::array_windows, which says how its elements are laid out. Each
+// window keeps its first index, element count and a dirty flag in the frame.
+//
+// WINDOW_OPEN empties the window; the loop does it on entry, since what was
+// loaded on the last entry may have changed since. WINDOW_GET and WINDOW_SET
+// take the int index in their second operand; outside the loaded run, they
+// first write a dirty window back and load the run starting at that index
+// (ECALL_ARRAY_WINDOW), which wraps a negative index and throws for one out of
+// range, as `a[k]` does. WINDOW_FLUSH writes a dirty window back and empties
+// it, which every exit from the loop does before anything else can read it.
+IR_OPCODE(WINDOW_OPEN,     "WINDOW_OPEN",     SIG(IMM),                IR_SIDE_EFFECTS)
+IR_OPCODE(WINDOW_GET,      "WINDOW_GET",      SIG(DST, SRC, SRC, IMM), IR_SIDE_EFFECTS)
+IR_OPCODE(WINDOW_SET,      "WINDOW_SET",      SIG(SRC, SRC, SRC, IMM), IR_SIDE_EFFECTS)
+IR_OPCODE(WINDOW_FLUSH,    "WINDOW_FLUSH",    SIG(SRC, IMM),           IR_SIDE_EFFECTS)
+
 // `a.append(v)` and `a.push_back(v)` on a known Array, through ECALL_ARRAY_OPS.
 // Like PRINT, the destination is the call's value rather than a host result:
 // Array.append() answers null, so codegen writes NIL there.

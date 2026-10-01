@@ -809,11 +809,44 @@ void RISCVCodeGen::plan_frame(const IRFunction& func) {
 	m_fn.next_variant_slot = max_variants + SCRATCH_VARIANT_SLOTS + batch_slots;
 	m_fn.variant_space = variant_space;
 
-	m_fn.scope_slot_base = saved_reg_space + variant_space + codepoint_batch_space;
+	// Typed array windows: first index, count and dirty flag, then the buffer.
+	m_fn.array_windows.clear();
+	int array_window_space = 0;
+	for (const IRFunction::ArrayWindow& window : func.array_windows) {
+		ArrayWindowFrame frame;
+		frame.layout = ArrayWindowLayout(window.layout);
+		frame.element_type = window.element_type;
+		switch (frame.layout) {
+			case ArrayWindowLayout::U8: frame.element_size = 1; break;
+			case ArrayWindowLayout::I32: case ArrayWindowLayout::F32: frame.element_size = 4; break;
+			case ArrayWindowLayout::I64: case ArrayWindowLayout::F64: frame.element_size = 8; break;
+			case ArrayWindowLayout::RAW:
+				switch (window.element_type) {
+					case Variant::VECTOR2: frame.element_size = 2 * real_size(); break;
+					case Variant::VECTOR3: frame.element_size = 3 * real_size(); break;
+					case Variant::VECTOR4: frame.element_size = 4 * real_size(); break;
+					case Variant::VECTOR2I: frame.element_size = 8; break;
+					case Variant::VECTOR3I: frame.element_size = 12; break;
+					case Variant::VECTOR4I: case Variant::COLOR: frame.element_size = 16; break;
+					default:
+						throw CompilerException(ErrorType::RISCV_codegen_ERROR,
+							"Array window of an element type with no raw layout");
+				}
+				break;
+		}
+		frame.state_offset = saved_reg_space + variant_space + codepoint_batch_space + array_window_space;
+		frame.buffer_offset = frame.state_offset + 24;
+		array_window_space += 24 + ((int(IRFunction::ArrayWindow::ELEMENTS) * frame.element_size + 7) & ~7);
+		m_fn.array_windows[window.token] = frame;
+	}
+	if (array_window_space > 0) m_fn.omits_frame = false;
+
+	m_fn.scope_slot_base = saved_reg_space + variant_space + codepoint_batch_space + array_window_space;
 
 	m_fn.stack_frame_size = m_fn.omits_frame
 		? 0
-		: saved_reg_space + variant_space + codepoint_batch_space + m_fn.scope_slot_count * 8;
+		: saved_reg_space + variant_space + codepoint_batch_space + array_window_space +
+			m_fn.scope_slot_count * 8;
 
 	m_fn.stack_frame_size = (m_fn.stack_frame_size + 15) & ~15; // RISC-V ABI: 16-byte aligned
 
@@ -1453,6 +1486,8 @@ bool RISCVCodeGen::instruction_reads_residents_directly(const IRInstruction& ins
 		case IROpcode::BATCH_GET:
 		case IROpcode::CODEPOINT_GET:
 		case IROpcode::CONVERT:
+		case IROpcode::WINDOW_OPEN:
+		case IROpcode::WINDOW_GET:
 			return true;
 		case IROpcode::MOVE: {
 			if (m_fn.forward_return || instr.operands.size() < 2) return false;
@@ -1780,6 +1815,189 @@ void RISCVCodeGen::gen_syscall_string_codepoint_batch(const IRInstruction& instr
 	emit_syscall_result(result_vreg, REG_A0, result_offset, Variant::INT);
 }
 
+// A packed array's size(): ECALL_ARRAY_WINDOW asked to load nothing.
+void RISCVCodeGen::gen_syscall_array_window_size(const IRInstruction& instr, int result_vreg) {
+	if (instr.operands.size() != 3) {
+		throw CompilerException(ErrorType::RISCV_codegen_ERROR,
+			"ECALL_ARRAY_WINDOW size requires 3 operands");
+	}
+	const int array_vreg = instr.operands[2].reg_index();
+	spill_around_syscall({ REG_A0, REG_A3, REG_A5 });
+	emit_container_handle(REG_A0, array_vreg, get_variant_stack_offset(array_vreg));
+	emit_li(REG_A3, 0);
+	emit_li(REG_A5, 0);
+	emit_syscall(ECALL_ARRAY_WINDOW);
+	emit_syscall_result(result_vreg, REG_A0, get_variant_stack_offset(result_vreg), Variant::INT);
+}
+
+const ArrayWindowFrame& RISCVCodeGen::array_window(const IRInstruction& instr, size_t operand) const {
+	const auto it = m_fn.array_windows.find(instr.operands[operand].immediate());
+	if (it == m_fn.array_windows.end()) {
+		throw CompilerException(ErrorType::RISCV_codegen_ERROR,
+			std::string(ir_opcode_name(instr.opcode)) + " refers to an unknown array window");
+	}
+	return it->second;
+}
+
+// Makes sure the element `index` names is loaded, then leaves its address in
+// T0. A miss writes a dirty window back and loads the run starting at `index`;
+// the host wraps a negative one and throws for one out of range, so the run it
+// returns always holds the element.
+void RISCVCodeGen::emit_array_window_element(const ArrayWindowFrame& window, int array_vreg,
+	uint8_t index)
+{
+	const std::string hit = gen_local_label(".window_hit");
+	emit_ld(REG_T0, REG_SP, window.state_offset);
+	emit_sub(REG_T0, index, REG_T0);
+	emit_ld(REG_T1, REG_SP, window.state_offset + 8);
+	// Unsigned: an index below the first one wraps to a huge offset.
+	mark_label_use(hit, m_code.size());
+	emit_bltu(REG_T0, REG_T1, 0);
+
+	spill_around_syscall({ REG_A0, REG_A1, REG_A2, REG_A3, REG_A4, REG_A5, REG_A6 });
+	emit_mv(REG_A4, index);
+	emit_array_window_call(window, array_vreg, true);
+	emit_sd(REG_A4, REG_SP, window.state_offset);
+	emit_sd(REG_A0, REG_SP, window.state_offset + 8);
+	emit_sd(REG_ZERO, REG_SP, window.state_offset + 16);
+	emit_mv(REG_T0, REG_ZERO);
+
+	set_label(label_id(hit), m_code.size());
+	const int size = window.element_size;
+	if ((size & (size - 1)) == 0) {
+		int shift = 0;
+		while ((1 << shift) < size) shift++;
+		if (shift > 0) emit_slli(REG_T0, REG_T0, uint8_t(shift));
+	} else {
+		emit_li(REG_T1, size);
+		emit_mul(REG_T0, REG_T0, REG_T1);
+	}
+	emit_add(REG_T0, REG_SP, REG_T0);
+	emit_add_offset(REG_T0, REG_T0, window.buffer_offset);
+}
+
+// ECALL_ARRAY_WINDOW: write back what is dirty, then load the run starting at
+// A4 when `load`, or nothing at all.
+void RISCVCodeGen::emit_array_window_call(const ArrayWindowFrame& window, int array_vreg, bool load) {
+	emit_ld(REG_A2, REG_SP, window.state_offset);
+	emit_ld(REG_A3, REG_SP, window.state_offset + 8);
+	emit_ld(REG_T0, REG_SP, window.state_offset + 16);
+	emit_sub(REG_T0, REG_ZERO, REG_T0); // dirty is 0 or 1: a mask
+	emit_and(REG_A3, REG_A3, REG_T0);
+	emit_container_handle(REG_A0, array_vreg, get_variant_stack_offset(array_vreg));
+	emit_add_offset(REG_A1, REG_SP, window.buffer_offset);
+	// A size query loads nothing.
+	emit_li(REG_A5, load ? IRFunction::ArrayWindow::ELEMENTS : 0);
+	emit_li(REG_A6, int64_t(window.element_type));
+	emit_syscall(ECALL_ARRAY_WINDOW);
+}
+
+void RISCVCodeGen::gen_array_window(const IRInstruction& instr) {
+	switch (instr.opcode) {
+		case IROpcode::WINDOW_OPEN: {
+			const ArrayWindowFrame& window = array_window(instr, 0);
+			emit_sd(REG_ZERO, REG_SP, window.state_offset + 8);
+			emit_sd(REG_ZERO, REG_SP, window.state_offset + 16);
+			break;
+		}
+		case IROpcode::WINDOW_GET: {
+			const ArrayWindowFrame& window = array_window(instr, 3);
+			const int dst_vreg = instr.operands[0].reg_index();
+			const int array_vreg = instr.operands[1].reg_index();
+			const int index_vreg = instr.operands[2].reg_index();
+			const uint8_t index = emit_int_operand(REG_T2, index_vreg, get_variant_stack_offset(index_vreg));
+			emit_array_window_element(window, array_vreg, index);
+			auto [base, offset] = value_destination(dst_vreg);
+			switch (window.layout) {
+				case ArrayWindowLayout::U8:
+					emit_lbu(REG_T1, REG_T0, 0);
+					if (window.element_type == Variant::BOOL) emit_store_variant_bool(REG_T1, base, offset);
+					else emit_sd(REG_T1, base, offset + VARIANT_DATA_OFFSET);
+					break;
+				case ArrayWindowLayout::I32:
+					emit_lw(REG_T1, REG_T0, 0);
+					emit_sd(REG_T1, base, offset + VARIANT_DATA_OFFSET);
+					break;
+				case ArrayWindowLayout::I64:
+				case ArrayWindowLayout::F64:
+					emit_ld(REG_T1, REG_T0, 0);
+					emit_sd(REG_T1, base, offset + VARIANT_DATA_OFFSET);
+					break;
+				case ArrayWindowLayout::F32:
+					emit_flw(REG_FA0, REG_T0, 0);
+					emit_fcvt_d_s(REG_FA0, REG_FA0);
+					emit_fsd(REG_FA0, base, offset + VARIANT_DATA_OFFSET);
+					break;
+				case ArrayWindowLayout::RAW:
+					// Elements of 12 bytes are only word aligned.
+					for (int k = 0; k < window.element_size; k += 4) {
+						emit_lw(REG_T1, REG_T0, k);
+						emit_sw(REG_T1, base, offset + VARIANT_DATA_OFFSET + k);
+					}
+					break;
+			}
+			emit_li(REG_T1, int64_t(window.element_type));
+			emit_store_variant_type(REG_T1, base, offset);
+			break;
+		}
+		case IROpcode::WINDOW_SET: {
+			const ArrayWindowFrame& window = array_window(instr, 3);
+			const int array_vreg = instr.operands[0].reg_index();
+			const int index_vreg = instr.operands[1].reg_index();
+			const int value_vreg = instr.operands[2].reg_index();
+			const uint8_t index = emit_int_operand(REG_T2, index_vreg, get_variant_stack_offset(index_vreg));
+			emit_array_window_element(window, array_vreg, index);
+			auto [base, offset] = variant_source(value_vreg, get_variant_stack_offset(value_vreg), REG_T1);
+			switch (window.layout) {
+				case ArrayWindowLayout::U8:
+					if (window.element_type == Variant::BOOL) emit_load_variant_bool(REG_T2, base, offset);
+					else emit_ld(REG_T2, base, offset + VARIANT_DATA_OFFSET);
+					emit_sb(REG_T2, REG_T0, 0);
+					break;
+				case ArrayWindowLayout::I32:
+					emit_ld(REG_T2, base, offset + VARIANT_DATA_OFFSET);
+					emit_sw(REG_T2, REG_T0, 0);
+					break;
+				case ArrayWindowLayout::I64:
+				case ArrayWindowLayout::F64:
+					emit_ld(REG_T2, base, offset + VARIANT_DATA_OFFSET);
+					emit_sd(REG_T2, REG_T0, 0);
+					break;
+				case ArrayWindowLayout::F32:
+					emit_fld(REG_FA0, base, offset + VARIANT_DATA_OFFSET);
+					emit_fcvt_s_d(REG_FA0, REG_FA0);
+					emit_fsw(REG_FA0, REG_T0, 0);
+					break;
+				case ArrayWindowLayout::RAW:
+					for (int k = 0; k < window.element_size; k += 4) {
+						emit_lw(REG_T2, base, offset + VARIANT_DATA_OFFSET + k);
+						emit_sw(REG_T2, REG_T0, k);
+					}
+					break;
+			}
+			emit_li(REG_T1, 1);
+			emit_sd(REG_T1, REG_SP, window.state_offset + 16);
+			break;
+		}
+		case IROpcode::WINDOW_FLUSH: {
+			const ArrayWindowFrame& window = array_window(instr, 1);
+			const int array_vreg = instr.operands[0].reg_index();
+			spill_around_syscall({ REG_A0, REG_A1, REG_A2, REG_A3, REG_A4, REG_A5, REG_A6 });
+			const std::string clean = gen_local_label(".window_clean");
+			emit_ld(REG_T0, REG_SP, window.state_offset + 16);
+			mark_label_use(clean, m_code.size());
+			emit_beq(REG_T0, REG_ZERO, 0);
+			emit_array_window_call(window, array_vreg, false);
+			set_label(label_id(clean), m_code.size());
+			emit_sd(REG_ZERO, REG_SP, window.state_offset + 8);
+			emit_sd(REG_ZERO, REG_SP, window.state_offset + 16);
+			break;
+		}
+		default:
+			throw CompilerException(ErrorType::RISCV_codegen_ERROR, "Not an array window opcode");
+	}
+}
+
 void RISCVCodeGen::gen_syscall_array_batch(const IRInstruction& instr, int result_vreg) {
 	if (instr.operands.size() != 6) {
 		throw CompilerException(ErrorType::RISCV_codegen_ERROR,
@@ -2093,6 +2311,8 @@ void RISCVCodeGen::gen_call_syscall(const IRInstruction& instr) {
 		gen_syscall_array_batch(instr, result_vreg);
 	} else if (syscall_num == ECALL_DICTIONARY_OPS) {
 		gen_syscall_dictionary_ops(instr, result_vreg);
+	} else if (syscall_num == ECALL_ARRAY_WINDOW) {
+		gen_syscall_array_window_size(instr, result_vreg);
 	} else {
 		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "Unknown syscall number: " + std::to_string(syscall_num));
 	}
@@ -4290,6 +4510,12 @@ void RISCVCodeGen::gen_instruction(const IRInstruction& instr) {
 		case IROpcode::VARIANT_SET:
 			gen_variant_set(instr);
 			break;
+		case IROpcode::WINDOW_OPEN:
+		case IROpcode::WINDOW_GET:
+		case IROpcode::WINDOW_SET:
+		case IROpcode::WINDOW_FLUSH:
+			gen_array_window(instr);
+			break;
 		case IROpcode::VSET_INLINE:
 			gen_vset_inline(instr);
 			break;
@@ -4500,6 +4726,7 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 			case IROpcode::TRAIT_TEST: note_known_tag(dst, Variant::BOOL); break;
 			case IROpcode::LOAD_NIL: note_known_tag(dst, Variant::NIL); break;
 			case IROpcode::TYPE_OF: note_known_tag(dst, Variant::INT); break;
+			case IROpcode::WINDOW_GET: note_known_tag(dst, IRInstruction::TypeHint(array_window(instr, 3).element_type)); break;
 			case IROpcode::CONVERT:
 			case IROpcode::COERCE: note_known_tag(dst, instr.type_hint); break;
 			case IROpcode::LOAD_GLOBAL:
@@ -4720,6 +4947,7 @@ bool RISCVCodeGen::opcode_clobbers_abi_registers(IROpcode op) {
 		case IROpcode::MAKE_SCOPED:
 		case IROpcode::BATCH_GET:
 		case IROpcode::CODEPOINT_GET:
+		case IROpcode::WINDOW_OPEN:
 		case IROpcode::LABEL:
 		case IROpcode::SWITCH:
 		case IROpcode::JUMP:
@@ -4774,6 +5002,9 @@ bool RISCVCodeGen::opcode_clobbers_abi_registers(IROpcode op) {
 		case IROpcode::ARRAY_APPEND:
 		case IROpcode::ARRAY_GET:
 		case IROpcode::ARRAY_SET:
+		case IROpcode::WINDOW_GET:
+		case IROpcode::WINDOW_SET:
+		case IROpcode::WINDOW_FLUSH:
 		case IROpcode::DICT_SET:
 		case IROpcode::DICT_GET_CONST:
 		case IROpcode::DICT_SET_CONST:
@@ -7458,6 +7689,7 @@ static bool syscall_answers_in_register(const IRInstruction& instr) {
 	switch (instr.operands[1].immediate()) {
 		case ECALL_ARRAY_SIZE:
 		case ECALL_STRING_SIZE:
+		case ECALL_ARRAY_WINDOW: // only CALL_SYSCALL's form, size()
 		// Attaches a script to an object the caller already holds; nothing new
 		// is handed back, so no scoped variant is made.
 		case ECALL_CLASS_BIND:
@@ -7525,6 +7757,10 @@ static bool scoped_allocation_is_the_destination(const IRInstruction& instr) {
 
 static bool leaves_nothing_scoped(const IRInstruction& instr) {
 	switch (instr.opcode) {
+		// Raw elements in a frame buffer; a write-back changes the guest's own slot.
+		case IROpcode::WINDOW_GET:
+		case IROpcode::WINDOW_SET:
+		case IROpcode::WINDOW_FLUSH:
 		case IROpcode::ARRAY_SET:
 		case IROpcode::ARRAY_APPEND:
 		case IROpcode::DICT_SET:

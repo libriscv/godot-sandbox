@@ -300,6 +300,18 @@ struct IRInstruction {
 	}
 };
 
+// How a typed array window (WINDOW_*) holds an element. RAW is the Variant
+// payload of the element type, which is what a packed vector or Color array
+// stores too: its width follows real_t.
+enum class ArrayWindowLayout : uint8_t {
+	U8,
+	I32,
+	I64,
+	F32,
+	F64,
+	RAW,
+};
+
 struct IRFunction {
 	struct DebugLocal {
 		std::string name;
@@ -327,6 +339,15 @@ struct IRFunction {
 	// UTF-32 buffer used when every use of c is code-point-only. Tokens are
 	// opaque like array_batch_scopes: renumbering must not touch them.
 	std::vector<int64_t> codepoint_batch_buffers;
+	// Typed array windows (WINDOW_*), by token. The element is stored as the
+	// packed array lays it out; an Array window holds its Variant payload.
+	struct ArrayWindow {
+		static constexpr int64_t ELEMENTS = 256;
+		int64_t token = 0;
+		uint32_t element_type = 0; // Variant type a WINDOW_GET produces.
+		uint8_t layout = 0;        // ArrayWindowLayout
+	};
+	std::vector<ArrayWindow> array_windows;
 	// Has AWAIT; gets a resume entry, all parameters forced live.
 	bool is_coroutine = false;
 

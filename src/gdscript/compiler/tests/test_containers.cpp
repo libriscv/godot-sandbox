@@ -471,6 +471,110 @@ static void test_unknown_receiver_keeps_the_vcall() {
 	std::cout << "  \u2713 an untyped receiver keeps the VCALL" << std::endl;
 }
 
+// -= Typed array windows =-
+//
+// A counting loop over a typed array reads and writes raw elements in the frame;
+// what happens at run time is covered in tests/tests/test_array_windows.gd.
+
+static int count_element_ecalls(const IRFunction& func) {
+	return count_syscalls(func, ECALL_VARIANT_GET) + count_opcode(func, IROpcode::ARRAY_GET) +
+		count_opcode(func, IROpcode::ARRAY_SET) + count_opcode(func, IROpcode::VARIANT_SET);
+}
+
+static void test_typed_array_loops_use_windows() {
+	std::cout << "Testing that a counting loop over a typed array takes a window..." << std::endl;
+
+	const std::string source =
+		"var weights: Array[float]\n"
+		"func sum(a: PackedInt32Array) -> int:\n"
+		"\tvar s := 0\n"
+		"\tfor i in range(a.size()):\n"
+		"\t\ts += a[i]\n"
+		"\treturn s\n"
+		"func axpy(x: PackedFloat32Array, y: PackedFloat32Array, k: float):\n"
+		"\tfor i in x.size():\n"
+		"\t\ty[i] = y[i] + x[i] * k\n"
+		"\treturn y\n"
+		"func scale_weights(f: float):\n"
+		"\tfor i in weights.size():\n"
+		"\t\tweights[i] *= f\n"
+		"func total(a: Array[int]) -> int:\n"
+		"\tvar s := 0\n"
+		"\tfor i in a.size():\n"
+		"\t\tif a[i] < 0:\n"
+		"\t\t\treturn -1\n"
+		"\t\ts += a[i]\n"
+		"\treturn s\n";
+	const IRProgram ir = compile_to_ir(source, true);
+
+	const IRFunction& sum = find_function(ir, "sum");
+	assert(sum.array_windows.size() == 1);
+	assert(count_opcode(sum, IROpcode::WINDOW_GET) == 1);
+	assert(count_element_ecalls(sum) == 0);
+	// A packed array's size() is the window syscall loading nothing.
+	assert(count_vcalls(ir, sum, "size") == 0);
+	assert(count_syscalls(sum, ECALL_ARRAY_WINDOW) == 1);
+	// Read only: nothing to write back.
+	assert(count_opcode(sum, IROpcode::WINDOW_FLUSH) == 0);
+
+	const IRFunction& axpy = find_function(ir, "axpy");
+	assert(axpy.array_windows.size() == 2);
+	assert(count_opcode(axpy, IROpcode::WINDOW_SET) == 1);
+	assert(count_opcode(axpy, IROpcode::WINDOW_FLUSH) == 1);
+	assert(count_element_ecalls(axpy) == 0);
+
+	// A member is read through a local snapshot and stored back after the loop.
+	const IRFunction& scale = find_function(ir, "scale_weights");
+	assert(scale.array_windows.size() == 1);
+	assert(count_element_ecalls(scale) == 0);
+	assert(count_opcode(scale, IROpcode::STORE_GLOBAL) == 1);
+
+	// `return` inside a read-only loop owes no write-back.
+	const IRFunction& total = find_function(ir, "total");
+	assert(total.array_windows.size() == 1);
+	assert(count_opcode(total, IROpcode::WINDOW_FLUSH) == 0);
+	compile_to_machine_code(source);
+
+	std::cout << "  \u2713 a counting loop over a typed array takes a window" << std::endl;
+}
+
+static void test_escaping_loops_keep_element_ecalls() {
+	std::cout << "Testing that a loop that could observe the array takes no window..." << std::endl;
+
+	const std::string source =
+		"func helper(a: PackedInt32Array) -> int:\n"
+		"\treturn a[0]\n"
+		"func with_call(a: PackedInt32Array) -> int:\n"
+		"\tvar s := 0\n"
+		"\tfor i in a.size():\n"
+		"\t\ts += helper(a) + a[i]\n"
+		"\treturn s\n"
+		"func with_append(a: PackedInt32Array):\n"
+		"\tfor i in 3:\n"
+		"\t\ta.append(a[i])\n"
+		"func untyped(a: Array) -> int:\n"
+		"\tvar s := 0\n"
+		"\tfor i in a.size():\n"
+		"\t\ts += a[i]\n"
+		"\treturn s\n"
+		"func aliased(a: Array[int], b: Array[int]):\n"
+		"\tfor i in a.size():\n"
+		"\t\ta[i] = b[i]\n"
+		"func float_loop(a: PackedFloat32Array):\n"
+		"\tfor x in 3.0:\n"
+		"\t\ta[0] = x\n";
+	const IRProgram ir = compile_to_ir(source, true);
+	for (const char* name : { "with_call", "with_append", "untyped", "aliased", "float_loop" }) {
+		const IRFunction& func = find_function(ir, name);
+		assert(func.array_windows.empty());
+		assert(count_opcode(func, IROpcode::WINDOW_GET) == 0);
+		assert(count_opcode(func, IROpcode::WINDOW_SET) == 0);
+	}
+	compile_to_machine_code(source);
+
+	std::cout << "  \u2713 a loop that could observe the array takes no window" << std::endl;
+}
+
 int main() {
 	std::cout << "=== Container Element Access Tests ===" << std::endl << std::endl;
 
@@ -484,6 +588,8 @@ int main() {
 		test_element_access_survives_the_optimizer();
 		test_known_container_methods_lower_to_syscalls();
 		test_unknown_receiver_keeps_the_vcall();
+		test_typed_array_loops_use_windows();
+		test_escaping_loops_keep_element_ecalls();
 	} catch (const CompilerException& e) {
 		std::cerr << "Unexpected compiler error: " << e.what() << std::endl;
 		return 1;

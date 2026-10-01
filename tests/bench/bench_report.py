@@ -50,8 +50,9 @@ CATEGORIES = (
     ("loops and math", ("int loop", "float loop",
                         "untyped float math", "untyped float compare")),
     ("calls", ("call overhead", "recursion")),
-    ("containers", ("array append + index", "dictionary set + get",
-                    "container size")),
+    ("containers", ("array append + index", "packed array fill + sum",
+                    "packed array axpy", "typed array fill + sum",
+                    "dictionary set + get", "container size")),
     ("strings", ("string build", "string iterate")),
     ("guest dispatch", ("logic CPU dispatch", "single-instruction step")),
 )

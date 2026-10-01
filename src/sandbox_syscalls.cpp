@@ -17,6 +17,7 @@
 #include <godot_cpp/classes/timer.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
 #include <godot_cpp/variant/variant.hpp>
+#include <godot_cpp/variant/variant_internal.hpp>
 #include <godot_cpp/templates/hashfuncs.hpp>
 //#define ENABLE_SYSCALL_TRACE 1
 #include "syscalls_helpers.hpp"
@@ -3363,6 +3364,200 @@ APICALL(api_array_batch) {
 	machine.set_result(count);
 }
 
+namespace {
+// The elements a window covers. Its first index is the guest's, so a negative
+// one counts from the end -- the run then never crosses into the positive
+// indices, which name the same elements differently. Out of range throws, as
+// `a[k]` does: the guest only asks for an element it is about to touch.
+struct WindowRun {
+	int64_t first; // physical
+	int64_t count;
+};
+WindowRun window_run(int64_t start, int64_t count, int64_t size) {
+	const int64_t first = start < 0 ? start + size : start;
+	if (UNLIKELY(first < 0 || first >= size)) {
+		throw std::runtime_error("Array index out of bounds: " + std::to_string(start));
+	}
+	return { first, std::min<int64_t>(count, start < 0 ? -start : size - first) };
+}
+
+// One packed array's elements against a guest buffer, both directions. The
+// element is the engine's own type, so the buffer layout is the array's.
+template <typename Packed>
+int64_t packed_window(machine_t &machine, Variant *mutable_subject, const Variant &subject,
+		gaddr_t buffer, int64_t store_start, int64_t store_count, int64_t load_start, int64_t max_count) {
+	using Element = std::remove_cv_t<std::remove_pointer_t<decltype(std::declval<const Packed &>().ptr())>>;
+	// The engine's own array, not a copy: ptrw() copies only a shared one.
+	if (store_count > 0) {
+		Packed &packed = *VariantInternal::get_internal_value<Packed>(mutable_subject);
+		const WindowRun run = window_run(store_start, store_count, packed.size());
+		if (UNLIKELY(run.count != store_count)) {
+			throw std::runtime_error("Packed array window write-back out of range");
+		}
+		const Element *source = machine.memory.memarray<Element>(buffer, size_t(run.count));
+		std::memcpy(packed.ptrw() + run.first, source, size_t(run.count) * sizeof(Element));
+	}
+	const Packed &packed = *VariantInternal::get_internal_value<Packed>(
+			store_count > 0 ? static_cast<const Variant *>(mutable_subject) : &subject);
+	if (max_count == 0) {
+		return packed.size();
+	}
+	const WindowRun run = window_run(load_start, max_count, packed.size());
+	Element *destination = machine.memory.memarray<Element>(buffer, size_t(run.count));
+	std::memcpy(destination, packed.ptr() + run.first, size_t(run.count) * sizeof(Element));
+	return run.count;
+}
+
+// An Array's element in the raw form a packed array of that type would hold.
+// INT widens to int64 and FLOAT to double, the Variant's own payloads; an INT
+// read for a FLOAT element converts, as assigning one into Array[float] would.
+// Typed containers are a compiler promise, so the Array itself may be untyped:
+// null is T's default, which is what resize() leaves in a real Array[T]. The run
+// stops before an element of another type; the first one must match.
+template <typename T>
+int64_t array_window_load(machine_t &machine, const Array &array, gaddr_t buffer,
+		const WindowRun &run, Variant::Type type) {
+	T *destination = machine.memory.memarray<T>(buffer, size_t(run.count));
+	for (int64_t i = 0; i < run.count; i++) {
+		const Variant &element = *reinterpret_cast<const Variant *>(
+				internal::gdextension_interface_array_operator_index_const(array._native_ptr(), run.first + i));
+		if (variant_type(element) != type) {
+			if (variant_type(element) == Variant::NIL) {
+				destination[i] = T();
+				continue;
+			}
+			if constexpr (std::is_same_v<T, double>) {
+				if (variant_type(element) == Variant::INT) {
+					destination[i] = double(element.operator int64_t());
+					continue;
+				}
+			}
+			if (i == 0) {
+				throw std::runtime_error("An element of Array[" + std::string(GuestVariant::type_name(type)) +
+						"] is a " + GuestVariant::type_name(variant_type(element)));
+			}
+			return i;
+		}
+		// An inline payload is the T itself; anything else asks the engine.
+		const GDNativeVariant *inner = reinterpret_cast<const GDNativeVariant *>(&element);
+		if (variant_inline_payload_bytes(type) == int(sizeof(T))) {
+			std::memcpy(&destination[i], &inner->value, sizeof(T));
+		} else {
+			destination[i] = element.operator T();
+		}
+	}
+	return run.count;
+}
+
+// Straight into the element: a T is what Array[T] holds, and the caller has
+// refused a read-only Array. Array::set() is a method bind call per element.
+// The load just found each element a T or null, both inline, so the bytes can
+// be replaced without destroying anything.
+template <typename T>
+void array_window_store(machine_t &machine, Array &array, gaddr_t buffer, const WindowRun &run,
+		Variant::Type type) {
+	const T *source = machine.memory.memarray<T>(buffer, size_t(run.count));
+	const bool raw = variant_inline_payload_bytes(type) == int(sizeof(T));
+	for (int64_t i = 0; i < run.count; i++) {
+		Variant *element = reinterpret_cast<Variant *>(
+				internal::gdextension_interface_array_operator_index(array._native_ptr(), run.first + i));
+		GDNativeVariant *inner = reinterpret_cast<GDNativeVariant *>(element);
+		if (raw && variant_inline_payload_bytes(inner->type) >= 0) {
+			inner->type = uint8_t(type);
+			std::memcpy(&inner->value, &source[i], sizeof(T));
+		} else {
+			*element = source[i];
+		}
+	}
+}
+
+int64_t array_window(machine_t &machine, const Variant &subject, gaddr_t buffer,
+		int64_t store_start, int64_t store_count, int64_t load_start, int64_t max_count, Variant::Type type) {
+	// The handle shares the engine's Array: writes through it are the guest's.
+	Array array = variant_container<Array>(subject);
+	if (store_count > 0) {
+		throw_if_read_only(subject, "Array window (assignment)");
+		const WindowRun run = window_run(store_start, store_count, array.size());
+		if (UNLIKELY(run.count != store_count)) {
+			throw std::runtime_error("Array window write-back out of range");
+		}
+		switch (type) {
+			case Variant::BOOL: array_window_store<bool>(machine, array, buffer, run, type); break;
+			case Variant::INT: array_window_store<int64_t>(machine, array, buffer, run, type); break;
+			case Variant::FLOAT: array_window_store<double>(machine, array, buffer, run, type); break;
+			case Variant::VECTOR2: array_window_store<Vector2>(machine, array, buffer, run, type); break;
+			case Variant::VECTOR2I: array_window_store<Vector2i>(machine, array, buffer, run, type); break;
+			case Variant::VECTOR3: array_window_store<Vector3>(machine, array, buffer, run, type); break;
+			case Variant::VECTOR3I: array_window_store<Vector3i>(machine, array, buffer, run, type); break;
+			case Variant::VECTOR4: array_window_store<Vector4>(machine, array, buffer, run, type); break;
+			case Variant::VECTOR4I: array_window_store<Vector4i>(machine, array, buffer, run, type); break;
+			case Variant::COLOR: array_window_store<Color>(machine, array, buffer, run, type); break;
+			default: throw std::runtime_error("Array window: unsupported element type");
+		}
+	}
+	if (max_count == 0) {
+		return array.size();
+	}
+	const WindowRun run = window_run(load_start, max_count, array.size());
+	switch (type) {
+		case Variant::BOOL: return array_window_load<bool>(machine, array, buffer, run, type);
+		case Variant::INT: return array_window_load<int64_t>(machine, array, buffer, run, type);
+		case Variant::FLOAT: return array_window_load<double>(machine, array, buffer, run, type);
+		case Variant::VECTOR2: return array_window_load<Vector2>(machine, array, buffer, run, type);
+		case Variant::VECTOR2I: return array_window_load<Vector2i>(machine, array, buffer, run, type);
+		case Variant::VECTOR3: return array_window_load<Vector3>(machine, array, buffer, run, type);
+		case Variant::VECTOR3I: return array_window_load<Vector3i>(machine, array, buffer, run, type);
+		case Variant::VECTOR4: return array_window_load<Vector4>(machine, array, buffer, run, type);
+		case Variant::VECTOR4I: return array_window_load<Vector4i>(machine, array, buffer, run, type);
+		case Variant::COLOR: return array_window_load<Color>(machine, array, buffer, run, type);
+		default: throw std::runtime_error("Array window: unsupported element type");
+	}
+}
+} // namespace
+
+APICALL(api_array_window) {
+	auto [index, buffer, store_start, store_count, load_start, max_count, element_type] =
+		machine.sysargs<int32_t, gaddr_t, int64_t, int64_t, int64_t, int64_t, unsigned>();
+	Sandbox &emu = riscv::emu(machine);
+	SYS_TRACE("array_window", index, buffer, store_start, store_count, load_start, max_count);
+	if (UNLIKELY(max_count < 0 || max_count > 4096 || store_count < 0 || store_count > 4096)) {
+		throw std::runtime_error("Array window: count out of range");
+	}
+	PENALIZE(1'000 + 4 * (max_count + store_count));
+	const Variant &subject = get_scoped_variant_or_throw(emu, index, "Array window");
+	const Variant::Type type = variant_type(subject);
+	if (type == Variant::ARRAY) {
+		machine.set_result(array_window(machine, subject, buffer, store_start, store_count,
+			load_start, max_count, Variant::Type(element_type)));
+		return;
+	}
+	// A packed array is a value: writing back copies a borrowed caller's first,
+	// as `a[i] = v` does, and the slot then names the copy.
+	Variant *mutable_subject = store_count > 0 ? &emu.get_mutable_scoped_variant(index) : nullptr;
+	int64_t result;
+	switch (type) {
+		case Variant::PACKED_BYTE_ARRAY: result = packed_window<PackedByteArray>(machine, mutable_subject, subject, buffer, store_start, store_count, load_start, max_count); break;
+		case Variant::PACKED_INT32_ARRAY: result = packed_window<PackedInt32Array>(machine, mutable_subject, subject, buffer, store_start, store_count, load_start, max_count); break;
+		case Variant::PACKED_INT64_ARRAY: result = packed_window<PackedInt64Array>(machine, mutable_subject, subject, buffer, store_start, store_count, load_start, max_count); break;
+		case Variant::PACKED_FLOAT32_ARRAY: result = packed_window<PackedFloat32Array>(machine, mutable_subject, subject, buffer, store_start, store_count, load_start, max_count); break;
+		case Variant::PACKED_FLOAT64_ARRAY: result = packed_window<PackedFloat64Array>(machine, mutable_subject, subject, buffer, store_start, store_count, load_start, max_count); break;
+		case Variant::PACKED_VECTOR2_ARRAY: result = packed_window<PackedVector2Array>(machine, mutable_subject, subject, buffer, store_start, store_count, load_start, max_count); break;
+		case Variant::PACKED_VECTOR3_ARRAY: result = packed_window<PackedVector3Array>(machine, mutable_subject, subject, buffer, store_start, store_count, load_start, max_count); break;
+		case Variant::PACKED_VECTOR4_ARRAY: result = packed_window<PackedVector4Array>(machine, mutable_subject, subject, buffer, store_start, store_count, load_start, max_count); break;
+		case Variant::PACKED_COLOR_ARRAY: result = packed_window<PackedColorArray>(machine, mutable_subject, subject, buffer, store_start, store_count, load_start, max_count); break;
+		case Variant::PACKED_STRING_ARRAY:
+			if (max_count == 0 && store_count == 0) {
+				result = VariantInternal::get_internal_value<PackedStringArray>(&subject)->size();
+				break;
+			}
+			[[fallthrough]];
+		default:
+			throw std::runtime_error("Array window: " + std::string(GuestVariant::type_name(type)) +
+				" is not a typed array");
+	}
+	machine.set_result(result);
+}
+
 APICALL(api_dict_ops) {
 	auto [op, dict_idx, vkey, vaddr] = machine.sysargs<Dictionary_Op, unsigned, gaddr_t, gaddr_t>();
 	Sandbox &emu = riscv::emu(machine);
@@ -4321,6 +4516,7 @@ void Sandbox::initialize_syscalls() {
 			{ ECALL_ARRAY_AT, api_array_at },
 			{ ECALL_ARRAY_SIZE, api_array_size },
 			{ ECALL_ARRAY_BATCH, api_array_batch },
+			{ ECALL_ARRAY_WINDOW, api_array_window },
 
 			{ ECALL_DICTIONARY_OPS, api_dict_ops },
 

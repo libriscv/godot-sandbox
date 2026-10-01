@@ -42,6 +42,37 @@ func array_sum(n : int) -> int:
 		j += 1
 	return acc
 
+func packed_sum(n : int) -> int:
+	var a := PackedInt32Array()
+	a.resize(n)
+	for i in range(n):
+		a[i] = i * 3
+	var acc : int = 0
+	for i in range(a.size()):
+		acc += a[i]
+	return acc
+
+func packed_axpy(n : int) -> float:
+	var x := PackedFloat32Array()
+	var y := PackedFloat32Array()
+	x.resize(n)
+	y.resize(n)
+	for i in n:
+		x[i] = i * 0.5
+	for i in n:
+		y[i] = y[i] + x[i] * 2.0
+	return y[n - 1]
+
+func typed_array_sum(n : int) -> int:
+	var a : Array[int] = []
+	a.resize(n)
+	for i in n:
+		a[i] = i * 3
+	var acc : int = 0
+	for i in a.size():
+		acc += a[i]
+	return acc
+
 func dict_ops(n : int) -> int:
 	var d : Dictionary = {}
 	var i : int = 0
@@ -228,6 +259,9 @@ const KERNELS := [
 	{"group": "float loop", "fn": "loop_float", "n": 100000, "unit": "iteration"},
 	{"group": "recursion", "fn": "fib", "n": 20, "unit": "call"},
 	{"group": "array append + index", "fn": "array_sum", "n": 20000, "unit": "element"},
+	{"group": "packed array fill + sum", "fn": "packed_sum", "n": 20000, "unit": "element"},
+	{"group": "packed array axpy", "fn": "packed_axpy", "n": 20000, "unit": "element"},
+	{"group": "typed array fill + sum", "fn": "typed_array_sum", "n": 20000, "unit": "element"},
 	{"group": "dictionary set + get", "fn": "dict_ops", "n": 20000, "unit": "op", "cpp": "bench_dict_ops"},
 	{"group": "dictionary get", "fn": "dict_get", "n": 20000, "unit": "op", "cpp": "bench_dict_get"},
 	{"group": "dictionary string keys", "fn": "dict_string_keys", "n": 20000, "unit": "iteration", "cpp": "bench_dict_string_keys"},

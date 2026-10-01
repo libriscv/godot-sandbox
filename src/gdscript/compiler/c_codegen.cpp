@@ -1154,6 +1154,8 @@ struct Emitter {
                     << "  if (suspended) goto cleanup;\nresume" << at << ":;\n";
                 break;
             case IROpcode::MAKE_SCOPED: case IROpcode::BATCH_GET: case IROpcode::CODEPOINT_GET:
+            case IROpcode::WINDOW_OPEN: case IROpcode::WINDOW_GET:
+            case IROpcode::WINDOW_SET: case IROpcode::WINDOW_FLUSH:
                 unsupported(f, i);
             }
             switch (i.opcode) {

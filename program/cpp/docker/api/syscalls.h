@@ -147,7 +147,10 @@
 
 #define ECALL_VARIANT_SET (GAME_API_BASE + 66)
 
-#define ECALL_LAST (GAME_API_BASE + 67)
+// Raw elements of a typed array (and soon packed arrays)
+#define ECALL_ARRAY_WINDOW (GAME_API_BASE + 67)
+
+#define ECALL_LAST (GAME_API_BASE + 68)
 
 #define STRINGIFY_HELPER(x) #x
 #define STRINGIFY(x) STRINGIFY_HELPER(x)

@@ -25,6 +25,16 @@ namespace gdscript {
 inline constexpr const char *FAST_EXIT_SYMBOL = "fast_exit";
 inline constexpr size_t FAST_EXIT_SIZE = 8;
 
+// A typed array window's frame: the words holding its first index, element
+// count and dirty flag, then the element buffer.
+struct ArrayWindowFrame {
+	int state_offset = 0;
+	int buffer_offset = 0;
+	int element_size = 0;
+	ArrayWindowLayout layout = ArrayWindowLayout::RAW;
+	uint32_t element_type = 0;
+};
+
 class RISCVCodeGen {
 public:
 	explicit RISCVCodeGen(const VariantLayout& layout = native_variant_layout(),
@@ -166,6 +176,11 @@ private:
 	void gen_syscall_variant_get(const IRInstruction& instr, int result_vreg);
 	void gen_syscall_string_batch(const IRInstruction& instr, int result_vreg);
 	void gen_syscall_string_codepoint_batch(const IRInstruction& instr, int result_vreg);
+	void gen_syscall_array_window_size(const IRInstruction& instr, int result_vreg);
+	const ArrayWindowFrame& array_window(const IRInstruction& instr, size_t operand) const;
+	void emit_array_window_element(const ArrayWindowFrame& window, int array_vreg, uint8_t index);
+	void emit_array_window_call(const ArrayWindowFrame& window, int array_vreg, bool load);
+	void gen_array_window(const IRInstruction& instr);
 	void gen_syscall_array_batch(const IRInstruction& instr, int result_vreg);
 	void gen_syscall_dictionary_ops(const IRInstruction& instr, int result_vreg);
 	void gen_dict_const(const IRInstruction& instr);
@@ -647,6 +662,7 @@ private:
 		std::unordered_map<int64_t, int> array_batch_offsets;
 		std::unordered_map<size_t, std::vector<int64_t>> array_batch_releases;
 		std::unordered_map<int64_t, int> codepoint_batch_offsets;
+		std::unordered_map<int64_t, ArrayWindowFrame> array_windows;
 		std::array<int, 3> int_cache_owners {{ -1, -1, -1 }};
 		std::array<int, 3> float_cache_owners {{ -1, -1, -1 }};
 		uint8_t next_int_cache = 0;

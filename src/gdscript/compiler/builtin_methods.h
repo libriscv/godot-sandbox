@@ -9,6 +9,7 @@ enum class MethodLowering {
 	NONE,
 	ARRAY_SIZE,
 	STRING_SIZE,
+	PACKED_SIZE,
 	DICT_OP,
 };
 
@@ -62,6 +63,23 @@ inline BuiltinMethod find_builtin_method(uint32_t recv_type, const std::string& 
 				return { MethodLowering::STRING_SIZE, -1, Variant::INT, false, true };
 			if (argc == 0 && name == "is_empty")
 				return { MethodLowering::STRING_SIZE, -1, Variant::BOOL, true, true };
+			return {};
+
+		// ECALL_ARRAY_WINDOW asked to load nothing answers the size.
+		case Variant::PACKED_BYTE_ARRAY:
+		case Variant::PACKED_INT32_ARRAY:
+		case Variant::PACKED_INT64_ARRAY:
+		case Variant::PACKED_FLOAT32_ARRAY:
+		case Variant::PACKED_FLOAT64_ARRAY:
+		case Variant::PACKED_STRING_ARRAY:
+		case Variant::PACKED_VECTOR2_ARRAY:
+		case Variant::PACKED_VECTOR3_ARRAY:
+		case Variant::PACKED_VECTOR4_ARRAY:
+		case Variant::PACKED_COLOR_ARRAY:
+			if (argc == 0 && name == "size")
+				return { MethodLowering::PACKED_SIZE, -1, Variant::INT, false, true };
+			if (argc == 0 && name == "is_empty")
+				return { MethodLowering::PACKED_SIZE, -1, Variant::BOOL, true, true };
 			return {};
 
 		default:

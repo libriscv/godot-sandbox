@@ -136,6 +136,7 @@ static constexpr Shape SHAPES[] = {
 	{ ECALL_ARRAY_AT, { Arg::IDX_ARRAY, Arg::SMALL, Arg::OUT } },
 	{ ECALL_ARRAY_SIZE, { Arg::IDX_ARRAY } },
 	{ ECALL_ARRAY_BATCH, { Arg::IDX_ARRAY, Arg::SMALL, Arg::SMALL, Arg::OUT } },
+	{ ECALL_ARRAY_WINDOW, { Arg::IDX_ANY, Arg::OUT, Arg::SMALL, Arg::SMALL, Arg::SMALL, Arg::SMALL, Arg::OP } },
 	{ ECALL_DICTIONARY_OPS, { Arg::OP, Arg::IDX_DICT, Arg::VPTR, Arg::VPTR, Arg::VPTR } },
 	{ ECALL_STRING_CREATE, { Arg::NAME, Arg::NAMELEN } },
 	{ ECALL_STRING_OPS, { Arg::OP, Arg::IDX_STRING, Arg::SMALL, Arg::VPTR } },
