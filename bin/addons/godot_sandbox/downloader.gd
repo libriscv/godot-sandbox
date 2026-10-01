@@ -200,7 +200,7 @@ func _on_download_complete(result, response_code, headers, body, downloaded_name
 		"macOS":
 			if downloaded_name == "cmake":
 				binary_name = "CMake.app/Contents/bin/cmake"
-	var setting_name := "make" if downloaded_name == "ninja" else downloaded_name
+	var setting_name: String = "make" if downloaded_name == "ninja" else downloaded_name
 	ProjectSettings.set_setting("sandbox/toolchain/%s" % setting_name, ProjectSettings.globalize_path("user://godot-sandbox/%s" % downloaded_name).path_join(binary_name))
 	ProjectSettings.save()
 	_update_status()
