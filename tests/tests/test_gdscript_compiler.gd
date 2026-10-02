@@ -4106,6 +4106,50 @@ func meaning_of_this() -> String:
 	l.queue_free()
 	ts.queue_free()
 
+# `var s = 0` takes int from its value, not from a declaration. GDScript would
+# make it a float; SafeGDScript refuses instead -- a compile error for a known
+# float, a TypeError for one arriving at run time -- never a silent truncation.
+func test_an_inferred_int_never_truncates_a_float():
+	var s := _compile_and_load("""
+func store(x):
+	var s = 0
+	s = x
+	return s
+
+func store_declared(x):
+	var s := 0
+	s = x
+	return s
+
+func accumulate():
+	var acc = 0.0
+	var i = 1
+	while i < 5:
+		acc += i / 2.0
+		i += 1
+	return acc
+""")
+	assert_eq(s.vmcallv("store", 7), 7, "An int fits the inferred slot")
+	assert_eq(s.vmcallv("store", true), 1, "A bool widens into it")
+	assert_eq(s.vmcallv("store_declared", 2.5), 2, "A declared int truncates, as in GDScript")
+	assert_eq(s.vmcallv("accumulate"), 5.0, "A float accumulator keeps its fractions")
+
+	var before := s.get_exceptions()
+	s.vmcallv("store", 2.5)
+	assert_eq(s.get_exceptions(), before + 1, "A float into an inferred int should throw")
+	assert_engine_error("Cannot assign a value to variable 's' of type int")
+	assert_engine_error("Exception: Sandbox exception in TypeError: Cannot assign a value to variable 's' of type int")
+	s.queue_free()
+
+	var ts : Sandbox = Sandbox.new()
+	ts.set_program(Sandbox_TestsTests)
+	ts.restrictions = true
+	for source in ["func f():\n\tvar s = 0\n\ts += 0.5\n\treturn s\n",
+			"func f(i: int):\n\tvar s = 0\n\ts = s + i / 2.0\n\treturn s\n"]:
+		var elf = ts.vmcall("compile_to_elf", source)
+		assert_eq(elf.is_empty(), true, "should not compile: " + source)
+	ts.queue_free()
+
 # Helper: compile GDScript inside a Sandbox and return a Sandbox running the result
 func _compile_and_load(gdscript_code: String, instructions_max: int = 4000) -> Sandbox:
 	var ts : Sandbox = Sandbox.new()

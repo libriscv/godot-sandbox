@@ -254,6 +254,9 @@ struct VarDeclStmt : Stmt {
 	std::string name;
 	TypeExpr type_hint;
 	ExprPtr initializer;
+	// `:=`: the initializer's type is the declared type, as if written out.
+	// A plain `=` declares nothing; the slot only takes its value's type.
+	bool infer_type = false;
 	bool is_const = false;
 	bool is_property = false;
 	bool is_static = false;

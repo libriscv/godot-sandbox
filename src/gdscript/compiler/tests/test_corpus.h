@@ -755,7 +755,7 @@ func test():
 )" },
 		{ "int_to_float_promotion_in_loop", R"(
 func test():
-	var acc = 0
+	var acc = 0.0
 	var i = 1
 	while i < 5:
 		acc = acc + i / 2.0

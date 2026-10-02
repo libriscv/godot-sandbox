@@ -1355,7 +1355,10 @@ StmtPtr Parser::parse_var_decl(bool is_const) {
 	// ':' is ambiguous: type hint, accessor block, or bare `var x:`.
 	TypeExpr type_hint;
 	bool accessors_follow = false;
+	bool infer_type = false;
 	if (match(TokenType::COLON)) {
+		// `:=` is lexed as COLON, ASSIGN.
+		infer_type = check(TokenType::ASSIGN);
 		if (at_property_accessor() || check(TokenType::NEWLINE)) {
 			accessors_follow = true;
 		} else if (check(TokenType::IDENTIFIER) || check(TokenType::NULL_VAL)) {
@@ -1376,6 +1379,7 @@ StmtPtr Parser::parse_var_decl(bool is_const) {
 
 	auto stmt = make_at<VarDeclStmt>(name, name.lexeme, std::move(initializer), is_const);
 	stmt->type_hint = type_hint;
+	stmt->infer_type = infer_type;
 	stmt->doc_comment = doc_comment_above(name.line);
 
 	if (accessors_follow) {
@@ -1517,11 +1521,13 @@ std::unique_ptr<VarDeclStmt> Parser::parse_if_var_binding() {
 
 	TypeExpr type_hint;
 	bool has_initializer = false;
+	bool infer_type = false;
 	if (match(TokenType::COLON)) {
 		// `:=` is lexed as COLON, ASSIGN.  A type name after ':' is the
 		// ordinary annotated declaration form.
 		if (match(TokenType::ASSIGN)) {
 			has_initializer = true;
+			infer_type = true;
 		} else if (check(TokenType::IDENTIFIER) || check(TokenType::NULL_VAL)) {
 			type_hint = parse_type_expr();
 			consume(TokenType::ASSIGN,
@@ -1541,6 +1547,7 @@ std::unique_ptr<VarDeclStmt> Parser::parse_if_var_binding() {
 	ExprPtr initializer = parse_expression();
 	auto binding = make_at<VarDeclStmt>(name, name.lexeme, std::move(initializer), false);
 	binding->type_hint = std::move(type_hint);
+	binding->infer_type = infer_type;
 	return binding;
 }
 

@@ -55,6 +55,9 @@ private:
 		bool is_const = false;
 		bool is_variant = false;
 		size_t debug_index = SIZE_MAX;
+		// `var x = value`: the slot took its type from the value rather than a
+		// declaration, so a narrowing store is a reclassification, not a conversion.
+		bool inferred = false;
 	};
 
 	struct Scope {
@@ -76,10 +79,6 @@ private:
 		std::unordered_map<size_t, IRInstruction::TypeHint> narrowed_global_types;
 		// Nullable struct slots keep their shape separately from the current tag.
 		std::unordered_map<int, const StructDecl*> declared_structs;
-		// Untyped locals inferred from an initializer may legally change Variant
-		// type later; mixed numeric lowering must not bake their current tag into a
-		// loop-carried CONVERT.
-		std::unordered_set<int> reclassifiable_registers;
 		// Struct known for a register: always DICTIONARY-typed, used for field-name checks.
 		std::unordered_map<int, const StructDecl*> register_structs;
 		std::unordered_map<int, std::unordered_set<const TraitDecl*>> register_traits;

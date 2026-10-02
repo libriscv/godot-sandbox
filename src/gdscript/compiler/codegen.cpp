@@ -1265,8 +1265,9 @@ void CodeGenerator::gen_var_decl(const VarDeclStmt* stmt, FunctionContext& func,
 			func.declared_structs[reg] = declared_struct;
 		}
 	}
-	if (accepted_type.empty() && stmt->initializer != nullptr && !declared_variant) {
-		func.reclassifiable_registers.insert(reg);
+	if (accepted_type.empty() && stmt->initializer != nullptr && !declared_variant &&
+		!stmt->infer_type) {
+		find_variable(func, stmt->name)->inferred = true;
 	}
 }
 
@@ -1433,7 +1434,20 @@ void CodeGenerator::gen_store_to_variable(const std::string& name, int value_reg
 		set_register_type(func, var->register_num, IRInstruction::TypeHint_NONE);
 	} else {
 		reject_reclassification(*var, value_reg, func, site);
-		value_reg = coerce_to_declared_type(value_reg, get_register_type(func, var->register_num), func,
+		const IRInstruction::TypeHint held = get_register_type(func, var->register_num);
+		if (var->inferred && get_register_type(func, value_reg) == IRInstruction::TypeHint_NONE &&
+			(held == Variant::INT || held == Variant::FLOAT || held == Variant::BOOL))
+		{
+			// The run-time half of reject_reclassification: COERCE would truncate
+			// a float into an inferred int slot, where GDScript keeps the float.
+			// Admit only what the compile-time check admits, the widenings.
+			TypeSet accepted{uint64_t(1) << held};
+			if (held != Variant::BOOL) accepted.mask |= uint64_t(1) << Variant::BOOL;
+			if (held == Variant::FLOAT) accepted.mask |= uint64_t(1) << Variant::INT;
+			value_reg = coerce_to_declared_type(value_reg, accepted, func,
+				"variable '" + name + "'", site, TypeSet{uint64_t(1) << held}.to_string());
+		}
+		value_reg = coerce_to_declared_type(value_reg, held, func,
 			"variable '" + name + "'", site);
 	}
 
@@ -4783,9 +4797,6 @@ int CodeGenerator::gen_variable(const VariableExpr* expr, FunctionContext& func,
 		if (type != IRInstruction::TypeHint_NONE) {
 			set_register_type(func, new_reg, type);
 		}
-		if (func.reclassifiable_registers.count(local->register_num) != 0) {
-			func.reclassifiable_registers.insert(new_reg);
-		}
 		if (func.string_character_registers.count(local->register_num) != 0) {
 			func.string_character_registers.insert(new_reg);
 		}
@@ -5851,8 +5862,6 @@ int CodeGenerator::gen_binary(const BinaryExpr* expr, FunctionContext& func) {
 	// Godot promotes a mixed numeric pair to FLOAT. Make that conversion
 	// explicit so the backend receives a homogeneous, fully typed operation.
 	if (((is_arithmetic && expr->op != BinaryExpr::Op::MOD) || is_comparison) &&
-		func.reclassifiable_registers.count(left_reg) == 0 &&
-		func.reclassifiable_registers.count(right_reg) == 0 &&
 		((left_type == Variant::INT && right_type == Variant::FLOAT) ||
 		 (left_type == Variant::FLOAT && right_type == Variant::INT)))
 	{
@@ -5948,11 +5957,6 @@ int CodeGenerator::gen_binary(const BinaryExpr* expr, FunctionContext& func) {
 	instr.lhs_type_hint = left_type;
 	instr.rhs_type_hint = right_type;
 	func.ir.instructions.push_back(instr);
-	if (func.reclassifiable_registers.count(left_reg) != 0 ||
-		func.reclassifiable_registers.count(right_reg) != 0)
-	{
-		func.reclassifiable_registers.insert(result_reg);
-	}
 
 	if (expr->op == BinaryExpr::Op::IN) {
 		set_register_type(func, result_reg, Variant::BOOL);
@@ -9704,6 +9708,17 @@ void CodeGenerator::reject_reclassification(const Variable& var, int value_reg,
 	}
 	if (constructs_implicitly_from(incoming, held)) {
 		return;
+	}
+	if (held == Variant::INT && incoming == Variant::FLOAT) {
+		// A declared int (`: int` or `:=`) is the declared-type check's to refuse.
+		if (!var.inferred) {
+			return;
+		}
+		error_at("Variable '" + var.name + "' was inferred as int from its initializer and "
+			"is being assigned a float. Reclassification is disabled in SafeGDScript", site,
+			"GDScript would turn '" + var.name + "' into a float here. Initialize it with a "
+			"float ('var " + var.name + " = 0.0') to keep the fraction, or truncate "
+			"explicitly with int(...)");
 	}
 	error_at("Variable '" + var.name + "' has type " + std::string(variant_type_name(held)) +
 		" and is being assigned a value of type " + std::string(variant_type_name(incoming)) +

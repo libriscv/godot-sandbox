@@ -833,6 +833,80 @@ static void test_mixed_arithmetic_keeps_its_types() {
 	assert(strings.type_hint == Variant::STRING);
 }
 
+// `var s = 0` takes int from its value, not from a declaration. GDScript would
+// make it a float on `s += 0.5`; SafeGDScript does not reclassify, so the store
+// is refused rather than truncated back to an int.
+static void test_an_inferred_int_refuses_a_float() {
+	assert(rejects(
+		"func test():\n"
+		"\tvar s = 0\n"
+		"\ts += 0.5\n"
+		"\treturn s\n"));
+	assert(rejects(
+		"func test(i : int):\n"
+		"\tvar s = 0\n"
+		"\ts = s + i / 2.0\n"
+		"\treturn s\n"));
+	// Untyped locals promote int + float like every other operand pair.
+	const IRProgram ir = compile_to_ir(
+		"func test():\n"
+		"\tvar i = 2\n"
+		"\tvar f = 0.5\n"
+		"\treturn i + f\n", false);
+	const IRFunction& mixed = find_function(ir, "test");
+	assert(count_opcode(mixed, IROpcode::CONVERT) == 1);
+	assert(only(mixed, IROpcode::ADD).type_hint == Variant::FLOAT);
+	assert(std::get<double>(run(
+		"func test():\n"
+		"\tvar i = 2\n"
+		"\tvar f = 0.5\n"
+		"\treturn i + f\n", "test")) == 2.5);
+	// A float slot still widens what it is given.
+	assert(std::get<double>(run(
+		"func test():\n"
+		"\tvar s = 0.0\n"
+		"\ts += 1\n"
+		"\treturn s\n", "test")) == 1.0);
+	std::cout << "  ✓ an inferred int refuses a float instead of truncating it" << std::endl;
+}
+
+// A value of unknown type meets the same rule at run time: a guard admits the
+// slot's own tag and its widenings, where COERCE alone would truncate. A
+// declared slot (`: int`, `:=`) converts, as a typed GDScript variable does.
+static void test_an_inferred_slot_guards_an_unknown_value() {
+	const IRProgram inferred = compile_to_ir(
+		"func test(x):\n"
+		"\tvar s = 0\n"
+		"\ts = x\n"
+		"\treturn s\n", false);
+	const IRInstruction& guard = only(find_function(inferred, "test"), IROpcode::TYPE_TEST_MASK);
+	assert(guard.operands[2].immediate() ==
+		int64_t((1 << Variant::INT) | (1 << Variant::BOOL)));
+	assert(count_opcode(find_function(inferred, "test"), IROpcode::THROW) == 1);
+
+	const IRProgram widened = compile_to_ir(
+		"func test(x):\n"
+		"\tvar s = 0.0\n"
+		"\ts = x\n"
+		"\treturn s\n", false);
+	assert(only(find_function(widened, "test"), IROpcode::TYPE_TEST_MASK).operands[2].immediate() ==
+		int64_t((1 << Variant::FLOAT) | (1 << Variant::INT) | (1 << Variant::BOOL)));
+
+	for (const char* declaration : { "var s := 0", "var s : int = 0" }) {
+		const IRProgram declared = compile_to_ir(
+			std::string("func test(x):\n\t") + declaration + "\n"
+			"\ts = x\n"
+			"\treturn s\n", false);
+		assert(count_opcode(find_function(declared, "test"), IROpcode::TYPE_TEST_MASK) == 0);
+		assert(count_opcode(find_function(declared, "test"), IROpcode::COERCE) == 1);
+		// A known float is the declared-type check's to refuse, as before.
+		assert(rejects(std::string("func test():\n\t") + declaration + "\n"
+			"\ts += 0.5\n"
+			"\treturn s\n"));
+	}
+	std::cout << "  ✓ an inferred slot guards an unknown value; a declared one converts" << std::endl;
+}
+
 // A local of the same name shadows the enum, as GDScript resolves.
 static void test_a_local_shadows_an_enum() {
 	assert(run_int(
@@ -905,6 +979,8 @@ int main() {
 	test_enum_shadows_a_builtin_type_name();
 	test_enum_as_a_dictionary_value();
 	test_mixed_arithmetic_keeps_its_types();
+	test_an_inferred_int_refuses_a_float();
+	test_an_inferred_slot_guards_an_unknown_value();
 	test_enum_rejects_an_unknown_member();
 	test_a_local_shadows_an_enum();
 

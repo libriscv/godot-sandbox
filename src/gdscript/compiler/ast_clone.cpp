@@ -196,6 +196,7 @@ FunctionDecl clone_function(const FunctionDecl& value) {
 VarDeclStmt clone_var(const VarDeclStmt& value) {
 	VarDeclStmt out(value.name, clone_expr(value.initializer.get()), value.is_const);
 	out.type_hint = value.type_hint;
+	out.infer_type = value.infer_type;
 	out.is_property = value.is_property;
 	out.is_static = value.is_static;
 	out.is_onready = value.is_onready;
