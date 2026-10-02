@@ -318,7 +318,9 @@ private:
 		if (m_sandbox != nullptr) {
 			return m_sandbox;
 		}
-		const String compiler_path = "res://addons/godot_sandbox/gdscript.elf";
+		const String compiler_path = sizeof(real_t) == sizeof(double)
+				? "res://addons/godot_sandbox/gdscript.double.elf"
+				: "res://addons/godot_sandbox/gdscript.elf";
 		if (!FileAccess::file_exists(compiler_path)) {
 			ERR_PRINT("SafeGDScript: GDScript compiler ELF not found at " + compiler_path);
 			return nullptr;

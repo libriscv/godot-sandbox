@@ -28,6 +28,11 @@ jobs:
         with:
           name: godot-sandbox-gdscript-elf
           path: .
+      - name: Download double-precision GDScript compiler ELF
+        uses: actions/download-artifact@v4
+        with:
+          name: godot-sandbox-gdscript-double-elf
+          path: .
       - name: Delete draft release(s)
         uses: hugo19941994/delete-draft-releases@v1.0.0
         env:
@@ -37,8 +42,10 @@ jobs:
         run: |
           mkdir -p godot-jit
           mv sandbox/libgodot_riscv.* godot-jit/
-          # SafeGDScript looks for the compiler at res://addons/godot_sandbox/gdscript.elf
+          # SafeGDScript looks for the compiler at res://addons/godot_sandbox/gdscript.elf,
+          # or gdscript.double.elf when the host is built with double-precision real_t
           mv godot-sandbox/gdscript.elf godot-sandbox/addons/godot_sandbox/gdscript.elf
+          mv godot-sandbox/gdscript.double.elf godot-sandbox/addons/godot_sandbox/gdscript.double.elf
           # The asset store requires the license inside the addon directory,
           # not at the zip root: a root-level copy is what got v0.50 denied
           cp LICENSE THIRDPARTY.txt godot-sandbox/addons/godot_sandbox/
@@ -55,6 +62,7 @@ jobs:
             godot-sandbox.zip
             godot-sandbox-jit.zip
             gdscript.elf
+            gdscript.double.elf
           tag_name: nightly
           generate_release_notes: true
           draft: true

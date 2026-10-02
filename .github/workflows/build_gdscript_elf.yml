@@ -7,7 +7,17 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    name: Build gdscript.elf
+    name: Build ${{ matrix.elf }}
+    strategy:
+      matrix:
+        include:
+          - elf: gdscript.elf
+            double_precision: OFF
+            artifact: godot-sandbox-gdscript-elf
+          # A double-precision host runs guests with 40-byte Variants
+          - elf: gdscript.double.elf
+            double_precision: ON
+            artifact: godot-sandbox-gdscript-double-elf
 
     steps:
       - uses: actions/checkout@v4
@@ -28,20 +38,21 @@ jobs:
             -DCMAKE_TOOLCHAIN_FILE=${{github.workspace}}/tests/toolchain.cmake \
             -DCMAKE_BUILD_TYPE=MinSizeRel \
             -DSTRIPPED=ON \
+            -DDOUBLE_PRECISION=${{ matrix.double_precision }} \
             -S program/cpp/gdscript_compiler
 
       - name: Build
         run: cmake --build build --parallel 4
 
       - name: Rename artifact
-        run: mv build/gdscript build/gdscript.elf
+        run: mv build/gdscript build/${{ matrix.elf }}
 
       - name: Verify ELF
-        run: file build/gdscript.elf
+        run: file build/${{ matrix.elf }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: godot-sandbox-gdscript-elf
-          path: build/gdscript.elf
+          name: ${{ matrix.artifact }}
+          path: build/${{ matrix.elf }}
           if-no-files-found: error
