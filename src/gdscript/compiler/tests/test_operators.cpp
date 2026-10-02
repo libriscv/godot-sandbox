@@ -515,6 +515,7 @@ static void test_integer_iteration_is_guarded_at_run_time() {
 
 	size_t int_test = func.instructions.size();
 	size_t loop_label = func.instructions.size();
+	size_t not_packed = func.instructions.size();
 	int adds = 0;
 	for (size_t i = 0; i < func.instructions.size(); i++) {
 		const IRInstruction& instr = func.instructions[i];
@@ -526,15 +527,23 @@ static void test_integer_iteration_is_guarded_at_run_time() {
 			untyped.strings[instr.operands[0].string_id].find("for_loop") != std::string::npos) {
 			loop_label = i;
 		}
-		if (instr.opcode == IROpcode::ADD) {
+		if (instr.opcode == IROpcode::LABEL &&
+			untyped.strings[instr.operands[0].string_id].find("for_not_packed") != std::string::npos) {
+			not_packed = i;
+		}
+		if (instr.opcode == IROpcode::ADD && i > not_packed) {
 			adds++;
 		}
 	}
 	assert(int_test < func.instructions.size() && "an untyped iterable needs the integer test");
 	assert(int_test < loop_label && "the tag test belongs outside the loop");
 
-	// The body is emitted once: `s += i` and the index increment, not one of
-	// each per arm.
+	// A packed array takes a batched walk of its own, ahead of the four-way loop.
+	assert(not_packed < int_test && "a packed array is tested for first");
+	assert(count_opcode(func, IROpcode::BATCH_GET) == 1);
+
+	// The four-way loop emits the body once: `s += i` and the index increment,
+	// not one of each per arm.
 	assert(adds == 2 && "the loop body was duplicated");
 
 	// The Array fast path keeps its dedicated syscalls, and the arm below it

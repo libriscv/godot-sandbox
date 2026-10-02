@@ -3330,28 +3330,62 @@ APICALL(api_array_size) {
 	machine.set_result(variant_container<Array>(var_array).size());
 }
 
+namespace {
+// Calls f with the packed array a Variant holds, or answers false.
+template <typename F>
+bool visit_packed_array(const Variant &subject, F &&f) {
+	switch (variant_type(subject)) {
+		case Variant::PACKED_BYTE_ARRAY: f(*VariantInternal::get_internal_value<PackedByteArray>(&subject)); return true;
+		case Variant::PACKED_INT32_ARRAY: f(*VariantInternal::get_internal_value<PackedInt32Array>(&subject)); return true;
+		case Variant::PACKED_INT64_ARRAY: f(*VariantInternal::get_internal_value<PackedInt64Array>(&subject)); return true;
+		case Variant::PACKED_FLOAT32_ARRAY: f(*VariantInternal::get_internal_value<PackedFloat32Array>(&subject)); return true;
+		case Variant::PACKED_FLOAT64_ARRAY: f(*VariantInternal::get_internal_value<PackedFloat64Array>(&subject)); return true;
+		case Variant::PACKED_STRING_ARRAY: f(*VariantInternal::get_internal_value<PackedStringArray>(&subject)); return true;
+		case Variant::PACKED_VECTOR2_ARRAY: f(*VariantInternal::get_internal_value<PackedVector2Array>(&subject)); return true;
+		case Variant::PACKED_VECTOR3_ARRAY: f(*VariantInternal::get_internal_value<PackedVector3Array>(&subject)); return true;
+		case Variant::PACKED_COLOR_ARRAY: f(*VariantInternal::get_internal_value<PackedColorArray>(&subject)); return true;
+		case Variant::PACKED_VECTOR4_ARRAY: f(*VariantInternal::get_internal_value<PackedVector4Array>(&subject)); return true;
+		default: return false;
+	}
+}
+} // namespace
+
 APICALL(api_array_batch) {
 	auto [arr_idx, start, max_count, output_addr] =
 		machine.sysargs<unsigned, int64_t, unsigned, gaddr_t>();
 	Sandbox &emu = riscv::emu(machine);
 	SYS_TRACE("array_batch", arr_idx, start, max_count, output_addr);
 
+	// An Array, or a packed array walked as an untyped iterable.
 	const Variant &var_array = get_scoped_variant_or_throw(emu, arr_idx, "Array::batch");
-	if (variant_type(var_array) != Variant::ARRAY) {
+	const bool is_array = variant_type(var_array) == Variant::ARRAY;
+	int64_t size = 0;
+	if (is_array) {
+		size = variant_container<Array>(var_array).size();
+	} else if (!visit_packed_array(var_array, [&](const auto &packed) { size = packed.size(); })) {
 		throw std::runtime_error("Invalid Array object for batched iteration");
 	}
-	const Array array = variant_container<Array>(var_array);
-	if (start < 0 || start >= array.size() || max_count == 0) {
+	if (start < 0 || start >= size || max_count == 0) {
 		machine.set_result(0);
 		return;
 	}
-	int64_t count = std::min<int64_t>(max_count, int64_t(array.size()) - start);
+	int64_t count = std::min<int64_t>(max_count, size - start);
 	const Sandbox::CurrentState &st = emu.state();
 	const int64_t headroom = int64_t(st.variants.capacity()) - int64_t(st.scoped_variants.size());
 	count = std::min(count, std::max<int64_t>(1, headroom / 4));
 	if (!emu.is_in_vmcall()) count = 1;
 
 	GuestVariant *output = machine.memory.memarray<GuestVariant>(output_addr, size_t(count));
+	if (!is_array) {
+		visit_packed_array(var_array, [&](const auto &packed) {
+			for (int64_t i = 0; i < count; i++) {
+				output[i].create(emu, Variant(packed[start + i]));
+			}
+		});
+		machine.set_result(count);
+		return;
+	}
+	const Array array = variant_container<Array>(var_array);
 	for (int64_t i = 0; i < count; i++) {
 		const Variant *element = reinterpret_cast<const Variant *>(
 				internal::gdextension_interface_array_operator_index_const(

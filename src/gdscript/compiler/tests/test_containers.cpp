@@ -637,6 +637,43 @@ static void test_escaping_loops_keep_element_ecalls() {
 	std::cout << "  \u2713 a loop that could observe the array takes no window" << std::endl;
 }
 
+static void test_untyped_packed_walks_take_batches() {
+	std::cout << "Testing that an untyped walk takes batches when it holds a packed array..." << std::endl;
+
+	const std::string source =
+		"func sum(a):\n"
+		"\tvar s := 0\n"
+		"\tfor v in a:\n"
+		"\t\ts += v\n"
+		"\treturn s\n"
+		"func written(a, b: PackedInt32Array):\n"
+		"\tvar i := 0\n"
+		"\tfor v in a:\n"
+		"\t\tb[i] = v\n"
+		"\t\ti += 1\n"
+		"func called(a):\n"
+		"\tfor v in a:\n"
+		"\t\tprint(v)\n";
+	const IRProgram ir = compile_to_ir(source, true);
+
+	const IRFunction& sum = find_function(ir, "sum");
+	assert(count_opcode(sum, IROpcode::TYPE_TEST_MASK) == 1);
+	assert(count_syscalls(sum, ECALL_ARRAY_BATCH) == 1);
+	assert(count_opcode(sum, IROpcode::BATCH_GET) == 1);
+	// Everything else keeps the four-way walk.
+	assert(count_vcalls(ir, sum, "get") == 1);
+
+	// A packed array written in the body may be the one walked.
+	for (const char* name : { "written", "called" }) {
+		const IRFunction& func = find_function(ir, name);
+		assert(count_syscalls(func, ECALL_ARRAY_BATCH) == 0);
+		assert(count_opcode(func, IROpcode::BATCH_GET) == 0);
+	}
+	compile_to_machine_code(source);
+
+	std::cout << "  \u2713 an untyped walk takes batches when it holds a packed array" << std::endl;
+}
+
 int main() {
 	std::cout << "=== Container Element Access Tests ===" << std::endl << std::endl;
 
@@ -653,6 +690,7 @@ int main() {
 		test_typed_array_loops_use_windows();
 		test_escaping_loops_keep_element_ecalls();
 		test_packed_walks_use_windows();
+		test_untyped_packed_walks_take_batches();
 	} catch (const CompilerException& e) {
 		std::cerr << "Unexpected compiler error: " << e.what() << std::endl;
 		return 1;

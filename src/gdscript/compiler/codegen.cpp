@@ -3239,6 +3239,39 @@ void CodeGenerator::gen_for(const ForStmt* stmt, FunctionContext& func) {
 			func.loops.push_back({end_label, continue_label});
 			push_scope(func);
 		}
+		// An untyped packed array is walked in batches, as an Array is, when
+		// nothing in the body can write it. The body is emitted twice: the
+		// four-way loop below is the walk of everything else.
+		std::string packed_done_label;
+		int packed_reg = -1;
+		bool writes_packed = false;
+		std::vector<ArrayWindowPlan> unused_plans;
+		if (unknown_iterable && m_batch_iteration && !func.ir.is_coroutine &&
+			plan_array_windows(stmt, func, unused_plans, {}, &writes_packed) && !writes_packed) {
+			pop_scope(func);
+			func.loops.pop_back();
+			// The walk is over the value the loop began with.
+			packed_reg = alloc_register(func);
+			func.ir.instructions.emplace_back(IROpcode::MOVE, IRValue::reg(packed_reg),
+				IRValue::reg(array_reg));
+			int64_t packed_types = 0;
+			for (int type = 0; type < Variant::VARIANT_MAX; type++) {
+				if (is_packed_array_type(IRInstruction::TypeHint(type))) packed_types |= int64_t(1) << type;
+			}
+			const int is_packed_reg = alloc_register(func);
+			func.ir.instructions.emplace_back(IROpcode::TYPE_TEST_MASK, IRValue::reg(is_packed_reg),
+				IRValue::reg(packed_reg), IRValue::imm(packed_types)).type_hint = Variant::BOOL;
+			set_register_type(func, is_packed_reg, Variant::BOOL);
+			const std::string not_packed_label = make_label("for_not_packed");
+			packed_done_label = make_label("for_packed_done");
+			emit_conditional_branch(IROpcode::BRANCH_ZERO, is_packed_reg, not_packed_label, func);
+			free_register(func, is_packed_reg);
+			gen_array_walk(stmt, packed_reg, func, iterable_element, iterable_trait);
+			func.ir.instructions.emplace_back(IROpcode::JUMP, ir_label(packed_done_label));
+			func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(not_packed_label));
+			func.loops.push_back({end_label, continue_label});
+			push_scope(func);
+		}
 
 		// Float joins the int arm: ceil(f) replaces the bound before the loop.
 		int is_float_reg = -1;
@@ -3495,6 +3528,10 @@ void CodeGenerator::gen_for(const ForStmt* stmt, FunctionContext& func) {
 		free_register(func, one_reg);
 		free_register(func, index_reg);
 		free_register(func, elem_reg);
+		if (!packed_done_label.empty()) {
+			func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(packed_done_label));
+			free_register(func, packed_reg);
+		}
 		return;
 	}
 
@@ -10946,7 +10983,7 @@ IRInstruction::TypeHint CodeGenerator::array_window_element(const std::string& n
 // the array a `for v in a` walks, which needs a window whether or not the body
 // indexes it.
 bool CodeGenerator::plan_array_windows(const ForStmt* stmt, FunctionContext& func,
-	std::vector<ArrayWindowPlan>& plans, const std::string& iterated)
+	std::vector<ArrayWindowPlan>& plans, const std::string& iterated, bool* writes_packed)
 {
 	struct Use {
 		bool subscripted = false;
@@ -11197,6 +11234,9 @@ bool CodeGenerator::plan_array_windows(const ForStmt* stmt, FunctionContext& fun
 	for (const auto& [name, use] : uses) {
 		const bool candidate = use.subscripted && !use.other && declared.count(name) == 0 &&
 			name != stmt->variable && array_window_element(name, func) != IRInstruction::TypeHint_NONE;
+		if (writes_packed != nullptr && use.written && is_packed_array_type(static_type(name))) {
+			*writes_packed = true;
+		}
 		if (name == iterated && !candidate) return false;
 		if (candidate) {
 			plans.push_back({ name, use.written });

@@ -237,7 +237,7 @@ private:
 		bool written = false;
 	};
 	bool plan_array_windows(const ForStmt* stmt, FunctionContext& func, std::vector<ArrayWindowPlan>& plans,
-		const std::string& iterated = {});
+		const std::string& iterated = {}, bool* writes_packed = nullptr);
 	static bool array_window_layout(IRInstruction::TypeHint container, IRInstruction::TypeHint array_element,
 		IRInstruction::TypeHint& element, ArrayWindowLayout& layout);
 	IRInstruction::TypeHint array_window_element(const std::string& name, FunctionContext& func,

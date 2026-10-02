@@ -464,6 +464,88 @@ func points_x() -> float:
 	assert_eq(s.vmcallv("with_call", PackedInt32Array([1, -2, 3])), 6 + 4, "a call keeps the ordinary walk")
 	s.queue_free()
 
+func test_untyped_packed_walks():
+	var s := _compile("""
+func sum(a):
+	var s = 0
+	for v in a:
+		s += v
+	return s
+
+func sum_from(a, s):
+	for v in a:
+		s += v
+	return s
+
+func joined(a):
+	var s := ""
+	for v in a:
+		s += str(v) + ","
+	return s
+
+func count_until(a, stop):
+	var n := 0
+	for v in a:
+		if v == stop:
+			break
+		if v < 0:
+			continue
+		n += 1
+	return n
+
+func first_over(a, limit):
+	for v in a:
+		if v > limit:
+			return v
+	return null
+
+func reassigned(a):
+	var s = 0
+	for v in a:
+		s += v
+		a = PackedInt32Array([100])
+	return s
+
+func copied(a, b: PackedInt32Array):
+	var i := 0
+	for v in a:
+		if i + 1 < b.size():
+			b[i + 1] = v * 10
+		i += 1
+	return b
+""")
+	for n in [0, 1, 15, 16, 17, 1000]:
+		var a := _ints(n)
+		var expected := 0
+		for v in a:
+			expected += v
+		assert_eq(s.vmcallv("sum", a), expected, "untyped PackedInt32Array of %d" % n)
+		assert_eq(s.vmcallv("sum", PackedInt64Array(Array(a))), expected, "untyped PackedInt64Array of %d" % n)
+		assert_eq(s.vmcallv("sum", PackedFloat64Array(Array(a))), float(expected), "untyped PackedFloat64Array of %d" % n)
+		assert_eq(s.vmcallv("sum", Array(a)), expected, "an Array still walks")
+	assert_eq(s.vmcallv("sum", PackedByteArray([1, 2, 250])), 253, "bytes")
+	assert_eq(s.vmcallv("sum_from", PackedFloat32Array([0.5, 1.25]), 0.0), 1.75, "float32 widens")
+	assert_eq(s.vmcallv("sum_from", PackedVector2Array([Vector2(1, 2), Vector2(3, 4)]), Vector2.ZERO), Vector2(4, 6), "vectors")
+	assert_eq(s.vmcallv("sum_from", PackedVector3Array([Vector3(1, 2, 3), Vector3(1, 1, 1)]), Vector3.ZERO), Vector3(2, 3, 4), "Vector3")
+	assert_eq(s.vmcallv("sum_from", PackedVector4Array([Vector4(1, 2, 3, 4)]), Vector4.ZERO), Vector4(1, 2, 3, 4), "Vector4")
+	assert_eq(s.vmcallv("sum_from", PackedColorArray([Color(0.25, 0.5, 0, 1), Color(0.25, 0, 0.5, 0)]), Color(0, 0, 0, 0)), Color(0.5, 0.5, 0.5, 1), "colors")
+	assert_eq(s.vmcallv("sum", 4), 6, "an int still counts")
+	assert_eq(s.vmcallv("joined", PackedStringArray(["a", "b", "c"])), "a,b,c,", "strings")
+	assert_eq(s.vmcallv("joined", "xyz"), "x,y,z,", "a String still walks")
+	assert_eq(s.vmcallv("joined", {"k": 1, "l": 2}), "k,l,", "a Dictionary still walks its keys")
+	var many := PackedStringArray()
+	for i in 300:
+		many.append(str(i))
+	assert_eq(s.vmcallv("joined", many).length(), s.vmcallv("joined", Array(many)).length(), "many strings")
+	assert_eq(s.vmcallv("count_until", PackedInt32Array([1, -1, 2, 3, 9, 4]), 9), 3, "break and continue")
+	assert_eq(s.vmcallv("first_over", _ints(100), 200), 203, "return from inside a batch")
+	assert_eq(s.vmcallv("first_over", _ints(10), 1000), null, "walks to the end")
+	assert_eq(s.vmcallv("reassigned", PackedInt32Array([1, 2, 3])), 6, "the walk keeps the value it began with")
+	var shared := PackedInt32Array([1, 2, 3, 4])
+	assert_eq(s.vmcallv("copied", shared, shared), PackedInt32Array([1, 10, 100, 1000]),
+		"a written packed array may be the walked one")
+	s.queue_free()
+
 func test_loops_that_must_not_take_a_window():
 	var s := _compile("""
 func helper(a: PackedInt32Array) -> int:
