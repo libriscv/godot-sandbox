@@ -269,6 +269,7 @@ private:
 	void emit_sub(uint8_t rd, uint8_t rs1, uint8_t rs2);
 	void emit_mul(uint8_t rd, uint8_t rs1, uint8_t rs2);
 	void emit_div(uint8_t rd, uint8_t rs1, uint8_t rs2);
+	void emit_divu(uint8_t rd, uint8_t rs1, uint8_t rs2);
 	void emit_rem(uint8_t rd, uint8_t rs1, uint8_t rs2);
 	void emit_and(uint8_t rd, uint8_t rs1, uint8_t rs2);
 	void emit_or(uint8_t rd, uint8_t rs1, uint8_t rs2);

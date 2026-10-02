@@ -1,6 +1,7 @@
 #include "ir_interpreter.h"
 #include "compiler_exception.h"
 #include "globals.h"
+#include "syscall_numbers.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -299,6 +300,13 @@ void IRInterpreter::execute_instruction(const IRFunction& func, const IRInstruct
 			break;
 		}
 
+		case IROpcode::DECIMAL_LENGTH: {
+			const int dst = instr.operands[0].reg_index();
+			const int src = instr.operands[1].reg_index();
+			ctx.registers[dst] = ir_decimal_length(get_int(get_register(ctx, src)));
+			break;
+		}
+
 		case IROpcode::POW:
 			// Host-defined truncation/rounding; no second definition here.
 			throw CompilerException(ErrorType::OPTIMIZER_ERROR,
@@ -455,14 +463,15 @@ void IRInterpreter::execute_instruction(const IRFunction& func, const IRInstruct
 			}
 
 			const GlobalFunction* info = &global_function(fn);
-			// All-String str(): plain concatenation, no host formatting needed.
+			// str() of Strings and ints is host-identical. Floats/bools need the host.
 			if (fn == GlobalFn::STR && !args.empty() &&
 			    std::all_of(args.begin(), args.end(), [](const Value& v) {
-					return std::holds_alternative<std::string>(v);
+					return std::holds_alternative<std::string>(v) || std::holds_alternative<int64_t>(v);
 				})) {
 				std::string joined;
 				for (const Value& v : args) {
-					joined += std::get<std::string>(v);
+					joined += std::holds_alternative<int64_t>(v)
+						? std::to_string(std::get<int64_t>(v)) : std::get<std::string>(v);
 				}
 				ctx.registers[result_reg] = std::move(joined);
 				break;
@@ -564,8 +573,19 @@ void IRInterpreter::execute_instruction(const IRFunction& func, const IRInstruct
 		case IROpcode::DICT_SET_CONST_STR:
 		case IROpcode::DICT_HAS_CONST:
 		case IROpcode::STRUCT_CHECK:
-		case IROpcode::TRAIT_TEST:
 		case IROpcode::CALL_SYSCALL:
+			// String.length(): count UTF-8 code points.
+			if (instr.operands.size() == 3 && instr.operands[1].type == IRValue::Type::IMMEDIATE &&
+				instr.operands[1].immediate() == ECALL_STRING_SIZE &&
+				std::holds_alternative<std::string>(get_register(ctx, instr.operands[2].reg_index())))
+			{
+				const std::string& text = std::get<std::string>(get_register(ctx, instr.operands[2].reg_index()));
+				ctx.registers[instr.operands[0].reg_index()] = static_cast<int64_t>(std::count_if(
+					text.begin(), text.end(), [](char c) { return (static_cast<unsigned char>(c) & 0xC0) != 0x80; }));
+				break;
+			}
+			[[fallthrough]];
+		case IROpcode::TRAIT_TEST:
 		case IROpcode::MAKE_SCOPED:
 		case IROpcode::BATCH_GET:
 		case IROpcode::CODEPOINT_GET:

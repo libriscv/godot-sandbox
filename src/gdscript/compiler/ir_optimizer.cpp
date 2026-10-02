@@ -79,6 +79,7 @@ const std::vector<IRPass>& IROptimizer::pipeline() {
 		{ "copy-propagation", &IROptimizer::copy_propagation },
 		{ "enhanced-copy-propagation", &IROptimizer::enhanced_copy_propagation },
 		{ "scalar-replacement", &IROptimizer::scalar_replace_structs },
+		{ "lazy-strings", &IROptimizer::sink_lazy_strings },
 		{ "licm", &IROptimizer::loop_invariant_code_motion },
 		{ "peephole", &IROptimizer::peephole_optimization },
 		{ "peephole", &IROptimizer::peephole_optimization },
@@ -127,6 +128,7 @@ bool IROptimizer::is_pass_enabled(const char* name) const {
 
 void IROptimizer::optimize(IRProgram& program) {
 	m_strings = &program.strings;
+	m_string_constants = &program.string_constants;
 	for (auto& func : program.functions) {
 		optimize_function(func);
 	}
@@ -603,6 +605,25 @@ void IROptimizer::fold_instruction(const IRInstruction& instr, std::vector<IRIns
 			}
 
 			if (!folded) {
+				invalidate_register(dst);
+				emit(instr);
+			}
+			break;
+		}
+
+		case IROpcode::DECIMAL_LENGTH: {
+			const int dst = instr.operands[0].reg_index();
+			const int src = instr.operands[1].reg_index();
+			auto known = m_constants.find(src);
+			if (known != m_constants.end() && known->second.type == ConstantValue::Type::INT) {
+				ConstantValue result;
+				result.type = ConstantValue::Type::INT;
+				result.int_value = ir_decimal_length(known->second.int_value);
+				IRInstruction load(IROpcode::LOAD_IMM, IRValue::reg(dst), IRValue::imm(result.int_value));
+				load.type_hint = Variant::INT;
+				emit(load);
+				set_register_constant(dst, result);
+			} else {
 				invalidate_register(dst);
 				emit(instr);
 			}
@@ -2596,6 +2617,427 @@ bool IROptimizer::enhanced_copy_propagation(IRFunction& func) {
 	}
 
 	return replace_instructions(func, std::move(new_instructions));
+}
+
+
+// Lazy strings: a str() whose result never escapes is described by its
+// pieces. length() is answered from those pieces in the guest (literal
+// lengths fold, int pieces use DECIMAL_LENGTH, String pieces ask the host).
+// A lone escape past a branch sinks the str() call there; multiple escapes
+// keep it in place. The call is never moved into a loop it was not in.
+namespace {
+
+enum class PieceKind : uint8_t { UNKNOWN, INT, STRING, LITERAL };
+
+struct LazyPiece {
+	PieceKind kind = PieceKind::UNKNOWN;
+	int reg = -1;
+	int64_t literal_index = -1; // LITERAL: IRProgram::string_constants index
+	int64_t literal_length = 0;
+};
+
+// Type hints here describe the result; a comparison's describes its operands.
+PieceKind defined_kind(const IRInstruction& instr) {
+	switch (instr.opcode) {
+		case IROpcode::LOAD_IMM:
+		case IROpcode::TYPE_OF:
+		case IROpcode::DECIMAL_LENGTH:
+			return PieceKind::INT;
+		case IROpcode::LOAD_STRING:
+			return PieceKind::STRING;
+		case IROpcode::COERCE:
+		case IROpcode::CONVERT:
+			if (instr.type_hint == Variant::INT) return PieceKind::INT;
+			if (instr.type_hint == Variant::STRING) return PieceKind::STRING;
+			return PieceKind::UNKNOWN;
+		case IROpcode::ADD:
+			// String + String concatenates.
+			if (instr.type_hint == Variant::STRING) return PieceKind::STRING;
+			[[fallthrough]];
+		case IROpcode::SUB:
+		case IROpcode::MUL:
+		case IROpcode::DIV:
+		case IROpcode::MOD:
+		case IROpcode::NEG:
+		case IROpcode::BIT_AND:
+		case IROpcode::BIT_OR:
+		case IROpcode::BIT_XOR:
+		case IROpcode::BIT_NOT:
+		case IROpcode::SHL:
+		case IROpcode::SHR:
+			return instr.type_hint == Variant::INT ? PieceKind::INT : PieceKind::UNKNOWN;
+		case IROpcode::CALL_SYSCALL:
+			if (instr.operands.size() == 3 && instr.type_hint == Variant::INT &&
+				instr.operands[1].type == IRValue::Type::IMMEDIATE &&
+				(instr.operands[1].immediate() == ECALL_STRING_SIZE ||
+				 instr.operands[1].immediate() == ECALL_ARRAY_SIZE))
+			{
+				return PieceKind::INT;
+			}
+			return PieceKind::UNKNOWN;
+		case IROpcode::GLOBAL_CALL:
+			return instr.operands.size() >= 2 &&
+				instr.operands[1].immediate() == static_cast<int64_t>(GlobalFn::STR)
+				? PieceKind::STRING : PieceKind::UNKNOWN;
+		default:
+			return PieceKind::UNKNOWN;
+	}
+}
+
+bool is_str_call(const IRInstruction& instr) {
+	if (instr.opcode != IROpcode::GLOBAL_CALL || instr.operands.size() < 5 ||
+		instr.operands[1].type != IRValue::Type::IMMEDIATE ||
+		instr.operands[1].immediate() != static_cast<int64_t>(GlobalFn::STR) ||
+		instr.operands[3].type != IRValue::Type::IMMEDIATE ||
+		instr.operands.size() != 4 + size_t(instr.operands[3].immediate()))
+	{
+		return false;
+	}
+	for (size_t i = 4; i < instr.operands.size(); i++) {
+		if (instr.operands[i].type != IRValue::Type::REGISTER) return false;
+	}
+	return true;
+}
+
+bool is_string_size_of(const IRInstruction& instr, int reg) {
+	return instr.opcode == IROpcode::CALL_SYSCALL && instr.operands.size() == 3 &&
+		instr.operands[1].type == IRValue::Type::IMMEDIATE &&
+		instr.operands[1].immediate() == ECALL_STRING_SIZE &&
+		instr.operands[2].type == IRValue::Type::REGISTER &&
+		instr.operands[2].reg_index() == reg;
+}
+
+} // namespace
+
+bool IROptimizer::sink_lazy_strings(IRFunction& func) {
+	// A coroutine resumes in the middle of its body; the reachability below
+	// only knows the one entry.
+	if (func.is_coroutine) {
+		return false;
+	}
+	// One str() per round: rewriting one changes what the next can see.
+	bool changed = false;
+	for (int round = 0; round < 256 && sink_one_lazy_string(func); round++) {
+		changed = true;
+	}
+	if (changed) {
+		invalidate_analysis();
+	}
+	return changed;
+}
+
+bool IROptimizer::sink_one_lazy_string(IRFunction& func) {
+	std::vector<IRInstruction>& code = func.instructions;
+	const size_t count = code.size();
+	if (count == 0) {
+		return false;
+	}
+
+	const size_t params = func.parameters.size();
+	int max_reg = int(params) - 1;
+	for (const IRInstruction& instr : code) {
+		for (const IRValue& operand : instr.operands) {
+			if (operand.type == IRValue::Type::REGISTER) {
+				max_reg = std::max(max_reg, operand.reg_index());
+			}
+		}
+	}
+	if (max_reg < 0) {
+		return false;
+	}
+	const size_t nregs = size_t(max_reg) + 1;
+
+	std::vector<std::vector<size_t>> defs(nregs);
+	std::vector<std::vector<size_t>> uses(nregs);
+	std::vector<int> reads;
+	for (size_t i = 0; i < count; i++) {
+		const IRInstruction& instr = code[i];
+		for (size_t operand = 0; operand < instr.operands.size(); operand++) {
+			if (instr.operands[operand].type == IRValue::Type::REGISTER &&
+				ir_writes_operand(instr, operand))
+			{
+				defs[size_t(instr.operands[operand].reg_index())].push_back(i);
+			}
+		}
+		reads.clear();
+		ir_collect_read_registers(instr, reads);
+		std::sort(reads.begin(), reads.end());
+		reads.erase(std::unique(reads.begin(), reads.end()), reads.end());
+		for (int reg : reads) {
+			if (reg >= 0 && size_t(reg) < nregs) uses[size_t(reg)].push_back(i);
+		}
+	}
+	const auto single_def = [&](int reg) {
+		return reg >= int(params) && defs[size_t(reg)].size() == 1;
+	};
+
+	// Every definition reaching `reg` through MOVEs has to agree. Not memoized:
+	// a cycle of MOVEs answers optimistically while it is being walked.
+	const auto value_kind = [&](int root) {
+		std::vector<bool> seen(nregs, false);
+		std::vector<int> work { root };
+		PieceKind kind = PieceKind::UNKNOWN;
+		bool any = false;
+		while (!work.empty()) {
+			const int reg = work.back();
+			work.pop_back();
+			if (seen[size_t(reg)]) continue;
+			seen[size_t(reg)] = true;
+			if (reg < int(params) || defs[size_t(reg)].empty()) {
+				return PieceKind::UNKNOWN;
+			}
+			for (size_t at : defs[size_t(reg)]) {
+				const IRInstruction& def = code[at];
+				if (def.opcode == IROpcode::MOVE && def.operands[1].type == IRValue::Type::REGISTER) {
+					work.push_back(def.operands[1].reg_index());
+					continue;
+				}
+				const PieceKind here = defined_kind(def);
+				if (here == PieceKind::UNKNOWN || (any && here != kind)) {
+					return PieceKind::UNKNOWN;
+				}
+				kind = here;
+				any = true;
+			}
+		}
+		return any ? kind : PieceKind::UNKNOWN;
+	};
+
+	const auto& labels = analysis(func).label_index;
+	const auto successors = [&](size_t i, std::vector<size_t>& out) {
+		out.clear();
+		const IRInstruction& instr = code[i];
+		const bool branch = ir_has_effect(instr.opcode, IR_BRANCH);
+		if (branch || ir_has_effect(instr.opcode, IR_TERMINATOR)) {
+			for (const IRValue& operand : instr.operands) {
+				if (operand.type != IRValue::Type::LABEL) continue;
+				auto it = labels.find(operand.string_id);
+				if (it != labels.end()) out.push_back(it->second);
+			}
+		}
+		if (!ir_has_effect(instr.opcode, IR_TERMINATOR) && i + 1 < count) {
+			out.push_back(i + 1);
+		}
+	};
+	// Instructions reachable from the entry without passing `blocker`.
+	const auto reachable_avoiding = [&](size_t blocker) {
+		std::vector<bool> seen(count, false);
+		std::vector<size_t> work { 0 };
+		std::vector<size_t> next;
+		while (!work.empty()) {
+			const size_t i = work.back();
+			work.pop_back();
+			if (i == blocker || seen[i]) continue;
+			seen[i] = true;
+			successors(i, next);
+			work.insert(work.end(), next.begin(), next.end());
+		}
+		return seen;
+	};
+
+	for (size_t k = 0; k < count; k++) {
+		const IRInstruction& call = code[k];
+		if (!is_str_call(call)) continue;
+		const int result = call.operands[0].reg_index();
+		if (!single_def(result)) continue;
+
+		std::vector<LazyPiece> pieces;
+		bool known = true;
+		for (size_t i = 4; i < call.operands.size() && known; i++) {
+			LazyPiece piece;
+			piece.reg = call.operands[i].reg_index();
+			if (single_def(piece.reg) && m_string_constants != nullptr) {
+				const IRInstruction& def = code[defs[size_t(piece.reg)][0]];
+				if (def.opcode == IROpcode::LOAD_STRING &&
+					size_t(def.operands[1].immediate()) < m_string_constants->size())
+				{
+					const std::string& text = (*m_string_constants)[size_t(def.operands[1].immediate())];
+					// ASCII: one byte, one character. Anything else asks the host.
+					if (std::all_of(text.begin(), text.end(),
+						[](char c) { return static_cast<unsigned char>(c) < 0x80; }))
+					{
+						piece.kind = PieceKind::LITERAL;
+						piece.literal_index = def.operands[1].immediate();
+						piece.literal_length = int64_t(text.size());
+					}
+				}
+			}
+			if (piece.kind == PieceKind::UNKNOWN) {
+				piece.kind = value_kind(piece.reg);
+			}
+			known = piece.kind != PieceKind::UNKNOWN;
+			pieces.push_back(piece);
+		}
+		if (!known) continue;
+
+		// The String's names: its register and every single-definition copy.
+		std::vector<int> names { result };
+		std::vector<size_t> alias_moves;
+		for (size_t n = 0; n < names.size(); n++) {
+			for (size_t at : uses[size_t(names[n])]) {
+				const IRInstruction& use = code[at];
+				if (use.opcode != IROpcode::MOVE || use.operands[1].reg_index() != names[n]) continue;
+				const int copy = use.operands[0].reg_index();
+				if (copy != names[n] && single_def(copy)) {
+					names.push_back(copy);
+					alias_moves.push_back(at);
+				}
+			}
+		}
+
+		struct Use { size_t at; int reg; };
+		std::vector<Use> lengths;
+		std::vector<Use> escapes;
+		for (int name : names) {
+			for (size_t at : uses[size_t(name)]) {
+				if (std::find(alias_moves.begin(), alias_moves.end(), at) != alias_moves.end() &&
+					code[at].operands[1].reg_index() == name)
+				{
+					continue;
+				}
+				(is_string_size_of(code[at], name) ? lengths : escapes).push_back({ at, name });
+			}
+		}
+		if (lengths.empty() && escapes.empty()) continue; // dead-code's to delete
+
+		// Every use must be dominated by the call.
+		const std::vector<bool> without_call = reachable_avoiding(k);
+		bool dominated = true;
+		for (const auto* list : { &lengths, &escapes }) {
+			for (const Use& use : *list) dominated = dominated && !without_call[use.at];
+		}
+		for (size_t at : alias_moves) dominated = dominated && !without_call[at];
+		if (!dominated) continue;
+
+		bool sink = false;
+		if (escapes.size() == 1 && escapes[0].at > k) {
+			const size_t at = escapes[0].at;
+			bool only_ints = true;
+			for (const LazyPiece& piece : pieces) {
+				// Copying a String piece extends its scoped lifetime.
+				only_ints = only_ints && piece.kind != PieceKind::STRING;
+			}
+			bool past_branch = false;
+			for (size_t i = k + 1; i < at && !past_branch; i++) {
+				past_branch = ir_is_control_flow(code[i].opcode);
+			}
+			bool same_loops = true;
+			for (const LoopInfo& loop : identify_loops(func)) {
+				size_t last = loop.header_idx;
+				for (size_t edge : loop.back_edges) last = std::max(last, edge);
+				const bool has_use = at >= loop.header_idx && at <= last;
+				const bool has_call = k >= loop.header_idx && k <= last;
+				same_loops = same_loops && (!has_use || has_call);
+			}
+			sink = only_ints && past_branch && same_loops;
+		}
+		const bool keep_call = !escapes.empty() && !sink;
+		if (keep_call && lengths.empty()) continue;
+
+		int next_reg = std::max(int(nregs), func.max_registers);
+		const auto fresh = [&next_reg]() { return next_reg++; };
+		const auto made = [&call](IRInstruction instr) {
+			instr.line = call.line;
+			instr.debug_order = 0;
+			return instr;
+		};
+
+		// length(), computed where the String was made.
+		std::vector<IRInstruction> at_call;
+		int length_reg = -1;
+		if (!lengths.empty()) {
+			int64_t literal_total = 0;
+			std::vector<int> parts;
+			for (const LazyPiece& piece : pieces) {
+				if (piece.kind == PieceKind::LITERAL) {
+					literal_total += piece.literal_length;
+					continue;
+				}
+				const int part = fresh();
+				IRInstruction instr = piece.kind == PieceKind::INT
+					? IRInstruction(IROpcode::DECIMAL_LENGTH, IRValue::reg(part), IRValue::reg(piece.reg))
+					: IRInstruction(IROpcode::CALL_SYSCALL, IRValue::reg(part),
+						IRValue::imm(ECALL_STRING_SIZE), IRValue::reg(piece.reg));
+				instr.type_hint = Variant::INT;
+				at_call.push_back(made(std::move(instr)));
+				parts.push_back(part);
+			}
+			size_t first = 0;
+			if (parts.empty() || literal_total != 0) {
+				length_reg = fresh();
+				IRInstruction load(IROpcode::LOAD_IMM, IRValue::reg(length_reg), IRValue::imm(literal_total));
+				load.type_hint = Variant::INT;
+				at_call.push_back(made(std::move(load)));
+			} else {
+				length_reg = parts[0];
+				first = 1;
+			}
+			for (size_t i = first; i < parts.size(); i++) {
+				const int sum = fresh();
+				IRInstruction add(IROpcode::ADD, IRValue::reg(sum), IRValue::reg(length_reg), IRValue::reg(parts[i]));
+				add.type_hint = Variant::INT;
+				at_call.push_back(made(std::move(add)));
+				length_reg = sum;
+			}
+		}
+
+		// The int pieces as they were at the call, for a str() made later.
+		std::vector<IRInstruction> at_escape;
+		if (sink) {
+			std::vector<IRValue> arguments;
+			for (const LazyPiece& piece : pieces) {
+				const int copy = fresh();
+				if (piece.kind == PieceKind::LITERAL) {
+					IRInstruction load(IROpcode::LOAD_STRING, IRValue::reg(copy), IRValue::imm(piece.literal_index));
+					load.type_hint = Variant::STRING;
+					load.line = code[escapes[0].at].line;
+					at_escape.push_back(std::move(load));
+				} else {
+					at_call.push_back(made(IRInstruction(IROpcode::MOVE, IRValue::reg(copy), IRValue::reg(piece.reg))));
+				}
+				arguments.push_back(IRValue::reg(copy));
+			}
+			IRInstruction remade = call;
+			remade.operands[0] = IRValue::reg(escapes[0].reg);
+			for (size_t i = 0; i < arguments.size(); i++) {
+				remade.operands[4 + i] = arguments[i];
+			}
+			remade.line = code[escapes[0].at].line;
+			remade.debug_order = 0;
+			at_escape.push_back(std::move(remade));
+		}
+
+		std::vector<IRInstruction> rewritten;
+		rewritten.reserve(count + at_call.size() + at_escape.size());
+		for (size_t i = 0; i < count; i++) {
+			if (i == k) {
+				rewritten.insert(rewritten.end(), at_call.begin(), at_call.end());
+				if (keep_call) rewritten.push_back(code[i]);
+				continue;
+			}
+			if (!keep_call && std::find(alias_moves.begin(), alias_moves.end(), i) != alias_moves.end()) {
+				continue;
+			}
+			if (sink && i == escapes[0].at) {
+				rewritten.insert(rewritten.end(), at_escape.begin(), at_escape.end());
+			}
+			const auto length = std::find_if(lengths.begin(), lengths.end(),
+				[i](const Use& use) { return use.at == i; });
+			if (length != lengths.end()) {
+				IRInstruction move(IROpcode::MOVE, code[i].operands[0], IRValue::reg(length_reg));
+				move.line = code[i].line;
+				move.debug_order = code[i].debug_order;
+				rewritten.push_back(std::move(move));
+				continue;
+			}
+			rewritten.push_back(code[i]);
+		}
+		func.instructions = std::move(rewritten);
+		func.max_registers = std::max(func.max_registers, next_reg);
+		invalidate_analysis();
+		return true;
+	}
+	return false;
 }
 
 } // namespace gdscript

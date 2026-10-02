@@ -91,6 +91,9 @@ IR_OPCODE(BREAKPOINT,      "BREAKPOINT",      SIG(),               IR_SIDE_EFFEC
 // typeof(): tag as INT. Same load as TYPE_TEST, no compare.
 IR_OPCODE(TYPE_OF,         "TYPE_OF",         SIG(DST, SRC),       IR_PURE)
 
+// Decimal digit count of str(src) for an int. Used by sink_lazy_strings.
+IR_OPCODE(DECIMAL_LENGTH,  "DECIMAL_LENGTH",  SIG(DST, SRC),       IR_PURE)
+
 // NIL Variant (distinct from INT 0).
 IR_OPCODE(LOAD_NIL,        "LOAD_NIL",        SIG(DST),            IR_PURE | IR_SIMPLE_LOAD)
 

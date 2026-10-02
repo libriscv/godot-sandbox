@@ -1296,6 +1296,33 @@ func test():
 	var a = 5
 	return f() * 10000 + f(2)
 )" },
+		// Backend digit loop vs. interpreter at every digit-count boundary.
+		{ "lazy_string_length_of_ints", R"(
+func test():
+	var total := 0
+	var v := 0
+	var i := 0
+	while i < 19:
+		var s : String = "n=" + str(v)
+		var t : String = str(-v) + "!"
+		var u : String = str(v + 1) + str(-v - 1) + "."
+		total += s.length() * 10000 + t.length() * 100 + u.length()
+		v = v * 10 + 9
+		i += 1
+	return total
+)" },
+		{ "lazy_string_length_extremes", R"(
+func test():
+	var lo := -9223372036854775807 - 1
+	var hi := 9223372036854775807
+	var total := 0
+	var i := 0
+	while i < 3:
+		total += str(lo + i).length() * 1000000 + str(hi - i).length() * 1000
+		total += str(lo).length() * 10 + str(i - 1).length()
+		i += 1
+	return total
+)" },
 	};
 	return programs;
 }

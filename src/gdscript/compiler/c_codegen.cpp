@@ -123,7 +123,7 @@ std::vector<int> proven_locals(const IRFunction &f, const IRProgram &p) {
                 auto src = [&](int n) { return state[i.operands[n].reg_index()]; };
                 uint64_t t = unknown;
                 switch (i.opcode) {
-                case IROpcode::LOAD_IMM: case IROpcode::TYPE_OF: t = 4; break;
+                case IROpcode::LOAD_IMM: case IROpcode::TYPE_OF: case IROpcode::DECIMAL_LENGTH: t = 4; break;
                 case IROpcode::LOAD_FLOAT_IMM: t = 8; break;
                 case IROpcode::LOAD_BOOL: case IROpcode::TYPE_TEST: case IROpcode::TYPE_TEST_MASK:
                 case IROpcode::CMP_EQ: case IROpcode::CMP_NEQ: case IROpcode::CMP_LT:
@@ -931,6 +931,18 @@ struct Emitter {
                     set(r(a[0]), 1, type + " == " + std::to_string(a[2].immediate()) +
                         (a[2].immediate() == 24 ? " && " + truth(input) : ""));
                 else set(r(a[0]), 1, "(" + integer(a[2].immediate()) + " & (1ULL << " + type + ")) != 0");
+                break;
+            }
+            case IROpcode::DECIMAL_LENGTH: {
+                // Operand is always int.
+                const auto input = r(a[1]);
+                std::string value = input + ".data.i";
+                if (scalar(input) == 2) value = payload(input, 2);
+                else box("&" + input);
+                out << "  { const GJInt x = " << value << "; GJUInt m = x < 0 ? 0ULL - (GJUInt)x : (GJUInt)x;"
+                    << " GJInt n = x < 0 ? 2 : 1; while (m >= 10) { m /= 10; n++; }\n";
+                set(r(a[0]), 2, "n");
+                out << "  }\n";
                 break;
             }
             case IROpcode::SCOPE_MARK: case IROpcode::SCOPE_RELEASE: break;

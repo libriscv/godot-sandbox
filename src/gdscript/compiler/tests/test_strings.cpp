@@ -576,8 +576,11 @@ static void test_string_ops_survive_the_optimizer() {
 	const IRProgram ir = compile_to_ir(source, true);
 	const IRFunction& test = find_function(ir, "test");
 
-	assert(str_call_arities(test) == std::vector<int>{ 2 });
-	assert(count_syscalls(test, ECALL_STRING_SIZE) == 1);
+	// No escape: length() is answered from pieces, no str() call emitted.
+	assert(str_call_arities(test).empty());
+	assert(count_syscalls(test, ECALL_STRING_SIZE) == 0);
+	assert(count_opcode(test, IROpcode::DECIMAL_LENGTH) == 1);
+	assert(count_opcode(test, IROpcode::LOAD_STRING) == 0);
 	assert(count_vcalls(ir, test, "length") == 0);
 	// Every remaining ADD is typed-int (no VEVAL fallback).
 	for (const auto& instr : test.instructions) {
@@ -589,6 +592,152 @@ static void test_string_ops_survive_the_optimizer() {
 	compile_to_machine_code(source);
 
 	std::cout << "  ✓ the folded calls survive the optimizer" << std::endl;
+}
+
+static size_t index_of(const IRFunction& func, IROpcode opcode, size_t from = 0) {
+	for (size_t i = from; i < func.instructions.size(); i++) {
+		if (func.instructions[i].opcode == opcode) {
+			return i;
+		}
+	}
+	return SIZE_MAX;
+}
+
+static void test_an_escape_builds_the_string_where_it_escapes() {
+	std::cout << "Testing that a String is built only in the arm it escapes from..." << std::endl;
+
+	const std::string source =
+		"func test(n : int, out : Array):\n"
+		"\tvar acc : int = 0\n"
+		"\tvar k : int = 0\n"
+		"\twhile k < n:\n"
+		"\t\tvar s : String = \"value \" + str(k)\n"
+		"\t\tacc += s.length()\n"
+		"\t\tif acc > 1000:\n"
+		"\t\t\tout.append(s)\n"
+		"\t\tk += 1\n"
+		"\treturn acc\n";
+
+	const IRProgram ir = compile_to_ir(source, true);
+	const IRFunction& test = find_function(ir, "test");
+
+	assert(str_call_arities(test) == std::vector<int>{ 2 });
+	assert(count_syscalls(test, ECALL_STRING_SIZE) == 0);
+	assert(count_opcode(test, IROpcode::DECIMAL_LENGTH) == 1);
+	// str() moved past the branch, before the append.
+	const size_t call = index_of(test, IROpcode::GLOBAL_CALL);
+	const size_t append = index_of(test, IROpcode::ARRAY_APPEND);
+	assert(call < append);
+	bool branch_before = false;
+	for (size_t i = index_of(test, IROpcode::DECIMAL_LENGTH); i < call; i++) {
+		branch_before = branch_before || ir_has_effect(test.instructions[i].opcode, IR_BRANCH);
+	}
+	assert(branch_before);
+	// Literal reloaded at the sink site, not carried from the original.
+	assert(index_of(test, IROpcode::LOAD_STRING) > index_of(test, IROpcode::DECIMAL_LENGTH));
+
+	compile_to_machine_code(source);
+
+	std::cout << "  ✓ the String is built only in the arm it escapes from" << std::endl;
+}
+
+static void test_two_escapes_keep_the_call() {
+	std::cout << "Testing that a String escaping twice is built where it was..." << std::endl;
+
+	const std::string source =
+		"func test(k : int, out : Array):\n"
+		"\tvar s : String = \"value \" + str(k)\n"
+		"\tvar n : int = s.length()\n"
+		"\tif n > 3:\n"
+		"\t\tout.append(s)\n"
+		"\tout.append(s)\n"
+		"\treturn n\n";
+
+	const IRProgram ir = compile_to_ir(source, true);
+	const IRFunction& test = find_function(ir, "test");
+
+	assert(str_call_arities(test) == std::vector<int>{ 2 });
+	assert(index_of(test, IROpcode::GLOBAL_CALL) < index_of(test, IROpcode::ARRAY_APPEND));
+	assert(count_syscalls(test, ECALL_STRING_SIZE) == 0);
+	assert(count_opcode(test, IROpcode::DECIMAL_LENGTH) == 1);
+
+	compile_to_machine_code(source);
+
+	std::cout << "  ✓ a String escaping twice is built where it was" << std::endl;
+}
+
+static void test_an_escape_is_not_moved_into_a_loop() {
+	std::cout << "Testing that a String is not rebuilt per pass of a loop it escapes in..." << std::endl;
+
+	const std::string source =
+		"func test(n : int, out : Array):\n"
+		"\tvar s : String = \"v\" + str(n)\n"
+		"\tvar acc : int = s.length()\n"
+		"\tvar k : int = 0\n"
+		"\twhile k < n:\n"
+		"\t\tout.append(s)\n"
+		"\t\tk += 1\n"
+		"\treturn acc\n";
+
+	const IRProgram ir = compile_to_ir(source, true);
+	const IRFunction& test = find_function(ir, "test");
+
+	assert(str_call_arities(test) == std::vector<int>{ 2 });
+	assert(index_of(test, IROpcode::GLOBAL_CALL) < index_of(test, IROpcode::LABEL));
+	assert(count_syscalls(test, ECALL_STRING_SIZE) == 0);
+
+	compile_to_machine_code(source);
+
+	std::cout << "  ✓ the String is built once, before the loop" << std::endl;
+}
+
+static void test_a_string_piece_asks_for_its_own_length() {
+	std::cout << "Testing that a String piece is measured, not concatenated..." << std::endl;
+
+	const std::string source =
+		"func test(name : String, k : int):\n"
+		"\tvar s : String = name + \": \" + str(k)\n"
+		"\treturn s.length()\n";
+
+	const IRProgram ir = compile_to_ir(source, true);
+	const IRFunction& test = find_function(ir, "test");
+
+	assert(str_call_arities(test).empty());
+	assert(count_syscalls(test, ECALL_STRING_SIZE) == 1);
+	assert(count_opcode(test, IROpcode::DECIMAL_LENGTH) == 1);
+
+	compile_to_machine_code(source);
+
+	std::cout << "  ✓ only the String piece is measured by the host" << std::endl;
+}
+
+static void test_unmeasurable_pieces_keep_the_string() {
+	std::cout << "Testing that a float or untyped piece keeps the String..." << std::endl;
+
+	// Float formatting and untyped values need the host.
+	for (const char* piece : { "0.5 * k", "x" }) {
+		const std::string source =
+			std::string("func test(k : int, x):\n") +
+			"\tvar s : String = \"v\" + str(" + piece + ")\n"
+			"\treturn s.length()\n";
+		const IRProgram ir = compile_to_ir(source, true);
+		const IRFunction& test = find_function(ir, "test");
+		assert(str_call_arities(test) == std::vector<int>{ 2 });
+		assert(count_syscalls(test, ECALL_STRING_SIZE) == 1);
+		assert(count_opcode(test, IROpcode::DECIMAL_LENGTH) == 0);
+	}
+
+	// Non-ASCII literals need the host to count code points.
+	const std::string source =
+		"func test(k : int):\n"
+		"\tvar s : String = \"\xC3\xA9t\xC3\xA9 \" + str(k)\n"
+		"\treturn s.length()\n";
+	const IRProgram ir = compile_to_ir(source, true);
+	const IRFunction& test = find_function(ir, "test");
+	assert(str_call_arities(test).empty());
+	assert(count_syscalls(test, ECALL_STRING_SIZE) == 1);
+
+	std::cout << "  ✓ only pieces the guest can measure are measured there" << std::endl;
 }
 
 int main() {
@@ -609,6 +758,11 @@ int main() {
 		test_iterating_a_float();
 		test_writing_a_character_is_refused();
 		test_string_ops_survive_the_optimizer();
+		test_an_escape_builds_the_string_where_it_escapes();
+		test_two_escapes_keep_the_call();
+		test_an_escape_is_not_moved_into_a_loop();
+		test_a_string_piece_asks_for_its_own_length();
+		test_unmeasurable_pieces_keep_the_string();
 	} catch (const CompilerException& e) {
 		std::cerr << "Unexpected compiler error: " << e.what() << std::endl;
 		return 1;

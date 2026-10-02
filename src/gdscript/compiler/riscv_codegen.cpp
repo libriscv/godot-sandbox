@@ -1107,7 +1107,8 @@ void RISCVCodeGen::plan_scalar_residency(const IRFunction& func) {
 		int type = IRInstruction::TypeHint_NONE;
 		switch (instr.opcode) {
 			case IROpcode::LOAD_IMM:
-			case IROpcode::TYPE_OF: type = Variant::INT; break;
+			case IROpcode::TYPE_OF:
+			case IROpcode::DECIMAL_LENGTH: type = Variant::INT; break;
 			case IROpcode::LOAD_FLOAT_IMM: type = Variant::FLOAT; break;
 			case IROpcode::LOAD_BOOL:
 			case IROpcode::TYPE_TEST:
@@ -4012,6 +4013,35 @@ void RISCVCodeGen::gen_instruction(const IRInstruction& instr) {
 			break;
 		}
 
+		case IROpcode::DECIMAL_LENGTH: {
+			// Decimal digits plus sign. Unsigned magnitude handles INT64_MIN.
+			const int dst_vreg = instr.operands[0].reg_index();
+			const int src_vreg = instr.operands[1].reg_index();
+			const uint8_t value = emit_int_operand(REG_T0, src_vreg, get_variant_stack_offset(src_vreg));
+			const std::string loop = gen_local_label(".digits");
+			const std::string done = gen_local_label(".digits_done");
+			emit_srai(REG_T1, value, 63);           // -1 when negative
+			emit_xor(REG_T0, value, REG_T1);
+			emit_sub(REG_T0, REG_T0, REG_T1);       // |value|
+			emit_sub(REG_WIDE_SCRATCH, REG_ZERO, REG_T1);
+			emit_addi(REG_WIDE_SCRATCH, REG_WIDE_SCRATCH, 1); // 1, or 2 with a sign
+			emit_li(REG_T1, 10);
+			define_label(loop);
+			mark_label_use(done, m_code.size());
+			emit_bltu(REG_T0, REG_T1, 0);
+			emit_divu(REG_T0, REG_T0, REG_T1);
+			emit_addi(REG_WIDE_SCRATCH, REG_WIDE_SCRATCH, 1);
+			mark_label_use(loop, m_code.size());
+			emit_jal(REG_ZERO, 0);
+			define_label(done);
+			emit_mv(REG_T0, REG_WIDE_SCRATCH);
+			auto [base, offset] = value_destination(dst_vreg);
+			emit_store_variant_int(REG_T0, base, offset);
+			emit_li(REG_T1, Variant::INT);
+			emit_store_variant_type(REG_T1, base, offset);
+			break;
+		}
+
 		case IROpcode::CONVERT: {
 			// CONVERT dst_reg, src_reg  with the target type in type_hint.
 			int dst_vreg = instr.operands[0].reg_index();
@@ -4759,7 +4789,8 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 		case IROpcode::TYPE_TEST_MASK: note_known_tag(dst, Variant::BOOL); break;
 			case IROpcode::TRAIT_TEST: note_known_tag(dst, Variant::BOOL); break;
 			case IROpcode::LOAD_NIL: note_known_tag(dst, Variant::NIL); break;
-			case IROpcode::TYPE_OF: note_known_tag(dst, Variant::INT); break;
+			case IROpcode::TYPE_OF:
+			case IROpcode::DECIMAL_LENGTH: note_known_tag(dst, Variant::INT); break;
 			case IROpcode::WINDOW_GET: note_known_tag(dst, IRInstruction::TypeHint(array_window(instr, 3).element_type)); break;
 			case IROpcode::CONVERT:
 			case IROpcode::COERCE: note_known_tag(dst, instr.type_hint); break;
@@ -4978,6 +5009,7 @@ bool RISCVCodeGen::opcode_clobbers_abi_registers(IROpcode op) {
 		case IROpcode::TYPE_TEST:
 		case IROpcode::TYPE_TEST_MASK:
 		case IROpcode::TYPE_OF:
+		case IROpcode::DECIMAL_LENGTH:
 		case IROpcode::MAKE_SCOPED:
 		case IROpcode::BATCH_GET:
 		case IROpcode::CODEPOINT_GET:
@@ -5854,6 +5886,10 @@ void RISCVCodeGen::emit_mul(uint8_t rd, uint8_t rs1, uint8_t rs2) {
 
 void RISCVCodeGen::emit_div(uint8_t rd, uint8_t rs1, uint8_t rs2) {
 	emit_r_type(0x33, rd, 4, rs1, rs2, 1);
+}
+
+void RISCVCodeGen::emit_divu(uint8_t rd, uint8_t rs1, uint8_t rs2) {
+	emit_r_type(0x33, rd, 5, rs1, rs2, 1);
 }
 
 void RISCVCodeGen::emit_rem(uint8_t rd, uint8_t rs1, uint8_t rs2) {
@@ -8003,6 +8039,7 @@ void RISCVCodeGen::plan_release_clears(const IRFunction& func) {
 			case IROpcode::TYPE_TEST:
 			case IROpcode::TYPE_TEST_MASK:
 			case IROpcode::TYPE_OF:
+			case IROpcode::DECIMAL_LENGTH:
 				continue;
 			default:
 				break;

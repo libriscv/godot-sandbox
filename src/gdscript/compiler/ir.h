@@ -124,6 +124,17 @@ inline bool ir_is_control_flow(IROpcode op) {
 	return (ir_opcode_info(op).effects & (IR_LABEL | IR_BRANCH | IR_TERMINATOR)) != 0;
 }
 
+// Decimal digit count of str(value). Unsigned magnitude handles INT64_MIN.
+inline int64_t ir_decimal_length(int64_t value) {
+	uint64_t magnitude = value < 0 ? 0u - static_cast<uint64_t>(value) : static_cast<uint64_t>(value);
+	int64_t length = value < 0 ? 2 : 1;
+	while (magnitude >= 10) {
+		magnitude /= 10;
+		length++;
+	}
+	return length;
+}
+
 // LABEL/VARIABLE/STRING operand names, interned. Keeps IRValue a 16-byte POD:
 // no allocation per operand, integer compare and hash on labels.
 //

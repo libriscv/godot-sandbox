@@ -2648,6 +2648,34 @@ func built_in_a_loop(n : int):
 		acc += s.length()
 		i += 1
 	return acc
+
+func measured_int(x : int):
+	var s : String = "#" + str(x) + "#"
+	return s.length()
+
+func built_where_it_escapes(n : int):
+	var kept : Array = []
+	var acc : int = 0
+	var i : int = 0
+	while i < n:
+		var s : String = "item " + str(i * 37 - 100)
+		acc += s.length()
+		if acc % 7 == 0:
+			kept.append(s)
+		i += 1
+	return [acc, kept]
+
+func escapes_twice(x : int):
+	var s : String = "x=" + str(x)
+	var n : int = s.length()
+	var out : Array = [s]
+	if n > 3:
+		out.append(s)
+	return [n, out]
+
+func measured_with_a_string(name : String, x : int):
+	var s : String = name + ": " + str(x)
+	return s.length()
 """
 	var s = _compile_and_load(gdscript_code, 400000)
 	if s == null:
@@ -2676,6 +2704,19 @@ func built_in_a_loop(n : int):
 		["measured_plain", ["ab", "cde"]],
 		["measured_literal", []],
 		["built_in_a_loop", [20]],
+		["measured_int", [0]],
+		["measured_int", [9]],
+		["measured_int", [10]],
+		["measured_int", [-9]],
+		["measured_int", [-10]],
+		["measured_int", [999999999999999999]],
+		["measured_int", [1000000000000000000]],
+		["measured_int", [9223372036854775807]],
+		["measured_int", [-9223372036854775807 - 1]],
+		["built_where_it_escapes", [60]],
+		["escapes_twice", [5]],
+		["escapes_twice", [-12345]],
+		["measured_with_a_string", ["héllo", 42]],
 	]
 	for case in cases:
 		var name : String = case[0]
