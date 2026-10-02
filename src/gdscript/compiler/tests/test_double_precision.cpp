@@ -426,6 +426,25 @@ void test_float_comparisons_and_vector_scalars_are_native() {
 	std::cout << "  ✓ Float comparisons and vector/scalar math stay in guest code" << std::endl;
 }
 
+void test_color_windows_widen_to_real_t() {
+	std::cout << "Testing Color array windows against real_t..." << std::endl;
+
+	const std::string source =
+		"func test(a : PackedColorArray, n : int) -> void:\n"
+		"\tfor i in range(n):\n"
+		"\t\ta[i] = a[i]\n";
+	static constexpr uint32_t FCVT_S_D = 0b0100000;
+	static constexpr uint32_t FCVT_D_S = 0b0100001;
+	const Compiled single = compile_to_code(source, VariantLayout(false));
+	const Compiled dbl = compile_to_code(source, VariantLayout(true));
+	assert(count_fp_op(single.code, FCVT_D_S) == 0);
+	assert(count_fp_op(single.code, FCVT_S_D) == 0);
+	assert(count_fp_op(dbl.code, FCVT_D_S) == 4);
+	assert(count_fp_op(dbl.code, FCVT_S_D) == 4);
+
+	std::cout << "  ✓ Color windows widen and narrow each component" << std::endl;
+}
+
 int main() {
 	std::cout << "=== Double Precision (real_t = double) Tests ===" << std::endl << std::endl;
 
@@ -440,6 +459,7 @@ int main() {
 	test_large_frames_survive_wider_variants();
 	test_compiler_option_selects_layout();
 	test_float_comparisons_and_vector_scalars_are_native();
+	test_color_windows_widen_to_real_t();
 
 	std::cout << std::endl << "=== All double precision tests passed! ===" << std::endl;
 	return 0;

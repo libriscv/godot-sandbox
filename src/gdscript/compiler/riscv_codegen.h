@@ -137,6 +137,7 @@ private:
 	int resident_int_register(int vreg) const;
 	int resident_float_register(int vreg) const;
 	bool scope_body_may_allocate(const IRFunction& func, size_t mark_index) const;
+	size_t loop_scope_dirty_demand(const IRFunction& func, size_t cap) const;
 	bool instruction_may_ecall(const IRInstruction& instr) const;
 	// Narrower: an ecall whose answer is a register value leaves no scoped
 	// variant behind, so a loop body made only of those needs no release.
