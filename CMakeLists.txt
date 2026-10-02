@@ -44,6 +44,7 @@ set(SOURCES
 	src/sandbox_syscalls.cpp
 	src/sandbox_syscalls_2d.cpp
 	src/sandbox_syscalls_3d.cpp
+	src/sandbox_syscalls_packed.cpp
 	src/override_libriscv.cpp
 
 	src/tests/assault.cpp

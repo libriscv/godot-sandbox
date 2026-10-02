@@ -44,6 +44,10 @@ void Sandbox::set_last_exception(const String &p_message, const String &p_locati
 }
 
 void Sandbox::handle_exception(gaddr_t address) {
+	// First, while guest memory still holds them: a packed array region the error
+	// unwound leaves its writes where element-by-element access would have.
+	this->commit_packed_acquisitions();
+
 	riscv::Memory<RISCV_ARCH>::Callsite callsite = machine().memory.lookup(address);
 	// If the callsite is not found, try to use the cache to find the address
 	if (callsite.address == 0x0) {

@@ -173,6 +173,13 @@ func write(n):
 	assert_engine_error("Exception: Banned property set: name")
 	assert_eq(target.name, "Target", "and the property never changed")
 
+# A guest names the packed type itself, and NIL has no internal getter to call.
+func test_fuzz_packed_calls_refuse_a_non_packed_subject():
+	for syscall in [568, 569]:
+		var s := _make_sandbox()
+		var r: Dictionary = s.assault("syscalls/%d:2" % syscall, ITERATIONS)
+		assert_eq(r["iterations"], ITERATIONS, "system call %d was driven to the end" % syscall)
+
 func test_fuzz_syscalls_respect_restrictions():
 	var s := _make_sandbox()
 	var r: Dictionary = s.assault("syscalls", ITERATIONS)
