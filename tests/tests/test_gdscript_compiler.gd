@@ -1960,6 +1960,159 @@ func test_chained_call():
 	s.queue_free()
 	ts.queue_free()
 
+class SignalSource:
+	extends RefCounted
+	signal fired
+	var count := 0
+	var secret := 42
+	func _on_fired() -> void:
+		count += 1
+
+func test_a_signal_value_obeys_the_method_callback():
+	var gdscript_code = """
+func emit_via_object(api):
+	api.emit_signal("fired")
+
+func emit_via_signal(api):
+	Signal(api, "fired").emit()
+
+func emit_via_property(api):
+	api.fired.emit()
+
+func connect_via_signal(api, target):
+	api.fired.connect(target)
+
+func signal_name(api):
+	return Signal(api, "fired").get_name()
+"""
+	var ts : Sandbox = Sandbox.new()
+	ts.set_program(Sandbox_TestsTests)
+	var compiled_elf = ts.vmcall("compile_to_elf", gdscript_code)
+	assert_false(compiled_elf.is_empty(), "Compiled ELF should not be empty")
+
+	var api := SignalSource.new()
+	api.fired.connect(api._on_fired)
+
+	var s = Sandbox.new()
+	s.load_buffer(compiled_elf)
+	s.set_method_allowed_callback(func(_sandbox, _obj, _method): return false)
+
+	for fn in ["emit_via_object", "emit_via_signal", "emit_via_property"]:
+		var exceptions = s.get_exceptions()
+		s.vmcallv(fn, api)
+		assert_eq(s.get_exceptions(), exceptions + 1, fn + " should be refused")
+		assert_engine_error("Method not allowed: emit_signal")
+		assert_engine_error("Exception: ")
+	assert_eq(api.count, 0, "No refused emit may reach the signal")
+
+	var exceptions = s.get_exceptions()
+	s.vmcallv("connect_via_signal", api, api.free)
+	assert_eq(s.get_exceptions(), exceptions + 1, "Signal.connect() should be refused")
+	assert_engine_error("Signal::call(): Method not allowed: connect")
+	assert_engine_error("Exception: Signal::call(): Method not allowed: connect")
+
+	s.set_method_allowed_callback(func(_sandbox, _obj, method): return method == "connect")
+	exceptions = s.get_exceptions()
+	s.vmcallv("connect_via_signal", api, api.free)
+	assert_eq(s.get_exceptions(), exceptions + 1, "Connecting a banned method should be refused")
+	assert_engine_error("Banned method connected: free")
+	assert_engine_error("Exception: Banned method connected: free")
+	assert_eq(api.fired.get_connections().size(), 1, "Nothing new was connected")
+	assert_eq(s.vmcallv("signal_name", api), &"fired", "Reading the Signal value stays allowed")
+
+	s.set_method_allowed_callback(func(_sandbox, _obj, method): return method == "emit_signal")
+	s.vmcallv("emit_via_signal", api)
+	assert_eq(api.count, 1, "Signal.emit() is gated as emit_signal")
+
+	s.queue_free()
+	ts.queue_free()
+
+func test_by_name_calls_obey_the_restriction_callbacks():
+	var gdscript_code = """
+func via_call(api):
+	api.call("emit_signal", "fired")
+func via_callv(api):
+	api.callv("emit_signal", ["fired"])
+func via_call_call(api):
+	api.call("call", "emit_signal", "fired")
+func via_callv_call(api):
+	api.callv("call", ["emit_signal", "fired"])
+func via_call_deferred(api):
+	api.call_deferred("emit_signal", "fired")
+func via_get_method(api):
+	api.get("emit_signal").call("fired")
+func via_callable_create(api):
+	Callable.create(api, "emit_signal").call("fired")
+func via_callable_create_signal(api):
+	Callable.create(Signal(api, "fired"), "emit").call()
+func via_signal_method_value(api):
+	Signal(api, "fired").emit.call()
+func via_array_map(api):
+	[1].map(Callable.create(api, "emit_signal").bind("fired").unbind(1))
+func via_call_reference(api):
+	var f = api.call
+	f.call("emit_signal", "fired")
+func via_created_call_reference(api):
+	Callable.create(api, "call").call("emit_signal", "fired")
+func via_get_call_reference(api):
+	api.get("call").call("emit_signal", "fired")
+
+func get_secret(api):
+	return api.get("secret")
+func call_get_secret(api):
+	return api.call("get", "secret")
+func get_indexed_secret(api):
+	return api.get_indexed("secret")
+func set_secret(api):
+	api.set("secret", 7)
+func set_deferred_secret(api):
+	api.set_deferred("secret", 7)
+
+func allowed_by_name(api):
+	api.call("_on_fired")
+	api.callv("_on_fired", [])
+	Callable.create(api, "_on_fired").call()
+	return api.get("count")
+"""
+	var ts : Sandbox = Sandbox.new()
+	ts.set_program(Sandbox_TestsTests)
+	var compiled_elf = ts.vmcall("compile_to_elf", gdscript_code)
+	assert_false(compiled_elf.is_empty(), "Compiled ELF should not be empty")
+
+	var api := SignalSource.new()
+	api.fired.connect(api._on_fired)
+	var s = Sandbox.new()
+	s.load_buffer(compiled_elf)
+	s.set_method_allowed_callback(func(_sandbox, _obj, method): return method != "emit_signal")
+
+	for fn in ["via_call", "via_callv", "via_call_call", "via_callv_call", "via_call_deferred",
+			"via_get_method", "via_callable_create", "via_callable_create_signal",
+			"via_signal_method_value", "via_array_map", "via_call_reference",
+			"via_created_call_reference", "via_get_call_reference"]:
+		var exceptions = s.get_exceptions()
+		s.vmcallv(fn, api)
+		assert_eq(s.get_exceptions(), exceptions + 1, fn + " should be refused")
+		assert_engine_error("not allowed")
+		assert_engine_error("Exception: ")
+	await get_tree().process_frame
+	assert_eq(api.count, 0, "No refused route may emit the signal")
+
+	assert_eq(s.vmcallv("allowed_by_name", api), 3, "Allowed methods still dispatch by name")
+
+	s.set_method_allowed_callback(Callable())
+	s.set_property_allowed_callback(func(_sandbox, _obj, property, _is_set): return property != "secret")
+	for fn in ["get_secret", "call_get_secret", "get_indexed_secret", "set_secret", "set_deferred_secret"]:
+		var exceptions = s.get_exceptions()
+		assert_eq(s.vmcallv(fn, api), null, fn + " should not reach the property")
+		assert_eq(s.get_exceptions(), exceptions + 1, fn + " should be refused")
+		assert_engine_error("Banned property accessed: secret")
+		assert_engine_error("Exception: Banned property accessed: secret")
+	await get_tree().process_frame
+	assert_eq(api.secret, 42, "No refused route may write the property")
+
+	s.queue_free()
+	ts.queue_free()
+
 func test_array_iteration():
 	# Test for item in array iteration
 	var gdscript_code = """

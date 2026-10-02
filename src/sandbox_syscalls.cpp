@@ -342,6 +342,103 @@ static inline void object_call(Sandbox &emu, godot::Object *obj,
 	}
 }
 
+// For methods that pass a second argument with the actual call/target name (eg. emit_signal)
+enum class ByName : uint8_t { NONE, CALL, CALLV, GET, SET };
+struct ByNameMethod {
+	ByName kind;
+	int name_arg;
+};
+
+static ByNameMethod by_name_method(std::string_view m) {
+	if (m == "call" || m == "call_deferred" || m == "call_thread_safe" ||
+			m == "call_deferred_thread_group" || m == "rpc" || m == "propagate_call")
+		return { ByName::CALL, 0 };
+	if (m == "rpc_id")
+		return { ByName::CALL, 1 };
+	if (m == "callv")
+		return { ByName::CALLV, 0 };
+	if (m == "get" || m == "get_indexed")
+		return { ByName::GET, 0 };
+	if (m == "set" || m == "set_indexed" || m == "set_deferred" || m == "set_thread_safe" ||
+			m == "set_deferred_thread_group")
+		return { ByName::SET, 0 };
+	return { ByName::NONE, 0 };
+}
+
+[[noreturn]] static void refuse_by_name(const char *what, const String &name) {
+	ERR_PRINT(String(what) + name);
+	throw std::runtime_error(std::string(what) + name.utf8().get_data());
+}
+
+static String by_name_property(std::string_view method, const Variant &arg) {
+	if (method == "get_indexed" || method == "set_indexed") {
+		const NodePath path = NodePath(arg).get_as_property_path();
+		return path.get_subname_count() > 0 ? String(path.get_subname(0)) : String();
+	}
+	return arg;
+}
+
+static void check_method_reference(const Sandbox &emu, godot::Object *obj, const String &name) {
+	if (UNLIKELY(!emu.is_allowed_method(obj, name)))
+		refuse_by_name("Method reference not allowed: ", name);
+	if (UNLIKELY(!emu.is_fully_unrestricted())) {
+		const CharString utf8 = name.utf8();
+		if (by_name_method(std::string_view(utf8.get_data(), utf8.length())).kind != ByName::NONE)
+			refuse_by_name("Method reference not allowed under restrictions: ", name);
+	}
+}
+
+static void check_by_name_call(const Sandbox &emu, godot::Object *obj, std::string_view method,
+		const Variant *const *args, int argc, int depth = 0) {
+	const ByNameMethod by_name = by_name_method(method);
+	if (by_name.kind == ByName::NONE)
+		return;
+	if (by_name.name_arg >= argc)
+		return;
+	if (UNLIKELY(depth > 4))
+		refuse_by_name("Nested by-name call refused: ", String::utf8(method.data(), method.size()));
+	const Variant &name_arg = *args[by_name.name_arg];
+	switch (by_name.kind) {
+		case ByName::CALL:
+		case ByName::CALLV: {
+			const String name = name_arg;
+			if (UNLIKELY(!emu.is_allowed_method(obj, name)))
+				refuse_by_name("Method not allowed: ", name);
+			const CharString utf8 = name.utf8();
+			const std::string_view inner(utf8.get_data(), utf8.length());
+			if (by_name.kind == ByName::CALL) {
+				const int first = by_name.name_arg + 1;
+				check_by_name_call(emu, obj, inner, args + first, argc - first, depth + 1);
+			} else if (by_name.name_arg + 1 < argc) {
+				const Array inner_args = *args[by_name.name_arg + 1];
+				const Variant *inner_ptrs[gdscript::CallABI::MAX_ARGUMENTS];
+				const int inner_argc = std::min<int>(inner_args.size(), gdscript::CallABI::MAX_ARGUMENTS);
+				Variant inner_values[gdscript::CallABI::MAX_ARGUMENTS];
+				for (int i = 0; i < inner_argc; i++) {
+					inner_values[i] = inner_args[i];
+					inner_ptrs[i] = &inner_values[i];
+				}
+				check_by_name_call(emu, obj, inner, inner_ptrs, inner_argc, depth + 1);
+			}
+		} break;
+		case ByName::GET: {
+			const String property = by_name_property(method, name_arg);
+			if (UNLIKELY(!emu.is_allowed_property(obj, property, false)))
+				refuse_by_name("Banned property accessed: ", property);
+			// get() returns a Callable for a method name.
+			if (obj->has_method(property))
+				check_method_reference(emu, obj, property);
+		} break;
+		case ByName::SET: {
+			const String property = by_name_property(method, name_arg);
+			if (UNLIKELY(!emu.is_allowed_property(obj, property, true)))
+				refuse_by_name("Banned property accessed: ", property);
+		} break;
+		case ByName::NONE:
+			break;
+	}
+}
+
 /// @brief Call a method on an Object, after checking that the sandbox allows it.
 static inline void object_call_checked(Sandbox &emu, godot::Object *obj,
 		Sandbox::CachedNameRef &cached_method, std::string_view method_name,
@@ -350,7 +447,75 @@ static inline void object_call_checked(Sandbox &emu, godot::Object *obj,
 		ERR_PRINT("Variant::call(): Method not allowed: " + cached_method->variant.operator String());
 		throw std::runtime_error("Variant::call(): Method not allowed: " + std::string(method_name));
 	}
+	if (UNLIKELY(!emu.is_fully_unrestricted()) &&
+			by_name_method(method_name).kind != ByName::NONE) {
+		BorrowedVariantScratch scratch;
+		const Variant *argptrs[gdscript::CallABI::MAX_ARGUMENTS];
+		for (int i = 0; i < argc; i++)
+			argptrs[i] = scratch.emplace(emu, args[i]);
+		check_by_name_call(emu, obj, method_name, argptrs, argc);
+	}
 	object_call(emu, obj, cached_method.get(), method_name, args, argc, result, native_only);
+}
+
+static void check_signal_call(const Sandbox &emu, const Variant &signal_variant,
+		std::string_view method_name, const Variant **args, int argc) {
+	const Signal signal = signal_variant;
+	godot::Object *obj = signal.get_object();
+	if (obj == nullptr)
+		return;
+
+	const char *object_method;
+	if (method_name == "get_name" || method_name == "get_object" ||
+			method_name == "get_object_id" || method_name == "is_null") {
+		return;
+	} else if (method_name == "emit") {
+		object_method = "emit_signal";
+	} else if (method_name == "get_connections") {
+		object_method = "get_signal_connection_list";
+	} else if (method_name == "connect" || method_name == "disconnect" ||
+			method_name == "is_connected" || method_name == "has_connections") {
+		object_method = method_name == "connect" ? "connect"
+				: method_name == "disconnect"   ? "disconnect"
+				: method_name == "is_connected" ? "is_connected"
+												: "has_connections";
+	} else {
+		const std::string name(method_name);
+		if (UNLIKELY(!emu.is_allowed_method(obj, name.c_str()))) {
+			ERR_PRINT(String("Signal::call(): Method not allowed: ") + name.c_str());
+			throw std::runtime_error("Signal::call(): Method not allowed: " + name);
+		}
+		return;
+	}
+	if (UNLIKELY(!emu.is_allowed_method(obj, object_method))) {
+		ERR_PRINT(String("Signal::call(): Method not allowed: ") + object_method);
+		throw std::runtime_error(std::string("Signal::call(): Method not allowed: ") + object_method);
+	}
+	if (method_name == "connect" && argc >= 1 && args[0]->get_type() == Variant::CALLABLE) {
+		const Callable callable = *args[0];
+		godot::Object *target = callable.is_custom() ? nullptr : callable.get_object();
+		if (target != nullptr && UNLIKELY(!emu.is_allowed_method(target, callable.get_method()))) {
+			ERR_PRINT("Banned method connected: " + String(callable.get_method()));
+			throw std::runtime_error("Banned method connected: " +
+					std::string(String(callable.get_method()).utf8().get_data()));
+		}
+	}
+}
+
+static void check_callable_create(const Sandbox &emu, const Variant &target, const Variant &name_arg) {
+	const String name = name_arg;
+	switch (variant_type(target)) {
+		case Variant::OBJECT:
+			if (godot::Object *obj = target.operator godot::Object *())
+				check_method_reference(emu, obj, name);
+			break;
+		case Variant::SIGNAL: {
+			const CharString utf8 = name.utf8();
+			check_signal_call(emu, target, std::string_view(utf8.get_data(), utf8.length()), nullptr, 0);
+		} break;
+		default:
+			break;
+	}
 }
 
 /// @brief Call a method on a resolved Variant, whatever the guest labelled it as.
@@ -385,6 +550,10 @@ static inline void variant_or_object_call(Sandbox &emu, Variant *vcall,
 	const Variant *argptrs[gdscript::CallABI::MAX_ARGUMENTS];
 	for (int i = 0; i < argc; i++) {
 		argptrs[i] = scratch.emplace(emu, args[i]);
+	}
+
+	if (UNLIKELY(vtype == Variant::SIGNAL)) {
+		check_signal_call(emu, *vcall, method_name, argptrs, argc);
 	}
 
 	GDExtensionCallError error;
@@ -1206,6 +1375,10 @@ static void vcall_impl(machine_t &machine, bool super) {
 			BorrowedVariantScratch scratch;
 			const Variant *argptrs[gdscript::CallABI::MAX_ARGUMENTS];
 			for (int i = 0; i < args_size; i++) argptrs[i] = scratch.emplace(emu, args[i]);
+			if (UNLIKELY(type == Variant::CALLABLE && args_size == 2 &&
+					!emu.is_fully_unrestricted() && method_name == "create")) {
+				check_callable_create(emu, *argptrs[0], *argptrs[1]);
+			}
 			GDExtensionCallError error;
 			internal::gdextension_interface_variant_call_static(
 				static_cast<GDExtensionVariantType>(type), cached_method->sname._native_ptr(),
@@ -2495,6 +2668,8 @@ APICALL(api_obj_property_get) {
 			bool valid = false;
 			Sandbox::CachedNameRef cached_member = emu.cached_guest_name(g_property, method, false);
 			const StringName &member = cached_member->sname;
+			if (UNLIKELY(var_type == Variant::SIGNAL))
+				check_signal_call(emu, var, method, nullptr, 0);
 			Variant value = var.get_named(member, valid);
 			if (!valid) {
 				ERR_PRINT("api_obj_property_get: " + String(GuestVariant::type_name(var_type)) +
@@ -2518,10 +2693,7 @@ APICALL(api_obj_property_get) {
 
 	// Object::get() skips methods, so `object.method` must return a Callable explicitly.
 	if (obj->has_method(prop_name)) {
-		if (UNLIKELY(!emu.is_allowed_method(obj, cached_property->variant))) {
-			ERR_PRINT("Method reference not allowed: " + prop_name);
-			throw std::runtime_error("Method reference not allowed: " + std::string(method));
-		}
+		check_method_reference(emu, obj, prop_name);
 		vret->create(emu, Variant(Callable(obj, prop_name)));
 		return;
 	}
