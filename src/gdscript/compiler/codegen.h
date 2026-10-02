@@ -236,12 +236,17 @@ private:
 		std::string name;
 		bool written = false;
 	};
-	std::vector<ArrayWindowPlan> plan_array_windows(const ForStmt* stmt, FunctionContext& func);
+	bool plan_array_windows(const ForStmt* stmt, FunctionContext& func, std::vector<ArrayWindowPlan>& plans,
+		const std::string& iterated = {});
 	static bool array_window_layout(IRInstruction::TypeHint container, IRInstruction::TypeHint array_element,
 		IRInstruction::TypeHint& element, ArrayWindowLayout& layout);
 	IRInstruction::TypeHint array_window_element(const std::string& name, FunctionContext& func,
 		ArrayWindowLayout* layout = nullptr);
 	std::vector<FunctionContext::ArrayWindowUse> open_array_windows(const ForStmt* stmt, FunctionContext& func);
+	std::vector<FunctionContext::ArrayWindowUse> open_array_windows(const std::vector<ArrayWindowPlan>& plans,
+		const ForStmt* stmt, FunctionContext& func);
+	// `for v in <packed array>`: elements straight from a window.
+	bool gen_packed_walk(const ForStmt* stmt, int array_reg, FunctionContext& func);
 	void close_array_windows(const std::vector<FunctionContext::ArrayWindowUse>& windows,
 		FunctionContext& func);
 	void emit_array_window_exits(FunctionContext& func);

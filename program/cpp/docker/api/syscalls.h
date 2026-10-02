@@ -147,7 +147,7 @@
 
 #define ECALL_VARIANT_SET (GAME_API_BASE + 66)
 
-// Raw elements of a typed array (and soon packed arrays)
+// Raw elements of a typed or packed array
 #define ECALL_ARRAY_WINDOW (GAME_API_BASE + 67)
 
 #define ECALL_LAST (GAME_API_BASE + 68)

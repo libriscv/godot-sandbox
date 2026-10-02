@@ -63,6 +63,16 @@ func packed_axpy(n : int) -> float:
 		y[i] = y[i] + x[i] * 2.0
 	return y[n - 1]
 
+func packed_walk(n : int) -> float:
+	var a := PackedVector2Array()
+	a.resize(n)
+	for i in n:
+		a[i] = Vector2(i, 1.0)
+	var acc : float = 0.0
+	for v in a:
+		acc += v.x * v.y
+	return acc
+
 func typed_array_sum(n : int) -> int:
 	var a : Array[int] = []
 	a.resize(n)
@@ -261,6 +271,7 @@ const KERNELS := [
 	{"group": "array append + index", "fn": "array_sum", "n": 20000, "unit": "element"},
 	{"group": "packed array fill + sum", "fn": "packed_sum", "n": 20000, "unit": "element"},
 	{"group": "packed array axpy", "fn": "packed_axpy", "n": 20000, "unit": "element"},
+	{"group": "packed array walk", "fn": "packed_walk", "n": 20000, "unit": "element"},
 	{"group": "typed array fill + sum", "fn": "typed_array_sum", "n": 20000, "unit": "element"},
 	{"group": "dictionary set + get", "fn": "dict_ops", "n": 20000, "unit": "op", "cpp": "bench_dict_ops"},
 	{"group": "dictionary get", "fn": "dict_get", "n": 20000, "unit": "op", "cpp": "bench_dict_get"},

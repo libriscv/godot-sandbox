@@ -3232,6 +3232,13 @@ void CodeGenerator::gen_for(const ForStmt* stmt, FunctionContext& func) {
 			gen_array_walk(stmt, array_reg, func, iterable_element, iterable_trait);
 			return;
 		}
+		if (m_batch_iteration && !func.ir.is_coroutine && packed_walk) {
+			pop_scope(func);
+			func.loops.pop_back();
+			if (gen_packed_walk(stmt, array_reg, func)) return;
+			func.loops.push_back({end_label, continue_label});
+			push_scope(func);
+		}
 
 		// Float joins the int arm: ceil(f) replaces the bound before the loop.
 		int is_float_reg = -1;
@@ -3628,6 +3635,141 @@ void CodeGenerator::gen_array_walk(const ForStmt* stmt, int array_reg, FunctionC
 	free_register(func, one_reg);
 	free_register(func, batch_index_reg);
 	free_register(func, index_reg);
+}
+
+// `for v in <packed array>`: the walk is a counting loop over a window, so an
+// element costs a bounds compare and a load where it cost a size() and a get()
+// VCALL. GDScript's loop shares the array rather than copying it, so the body
+// must pass the same gate a counting loop's windows do: then nothing but the
+// window itself can resize or rewrite the array, the size taken on entry holds,
+// and `a[k] = x` in the body goes through the very window the walk reads.
+// False when the gate refuses; nothing has been emitted then.
+bool CodeGenerator::gen_packed_walk(const ForStmt* stmt, int array_reg, FunctionContext& func) {
+	const IRInstruction::TypeHint container = get_register_type(func, array_reg);
+	IRInstruction::TypeHint element;
+	ArrayWindowLayout layout;
+	if (!array_window_layout(container, IRInstruction::TypeHint_NONE, element, layout)) {
+		return false;
+	}
+	// A variable walked is also one the body may index: both share one window.
+	std::string iterated;
+	if (const auto* variable = dynamic_cast<const VariableExpr*>(stmt->iterable.get());
+		variable != nullptr && array_window_element(variable->name, func) != IRInstruction::TypeHint_NONE) {
+		iterated = variable->name;
+	}
+	const std::string loop_label = make_label("packed_loop");
+	const std::string continue_label = make_label("packed_continue");
+	const std::string end_label = make_label("packed_end");
+	func.loops.push_back({ end_label, continue_label });
+	push_scope(func);
+	// Declared before planning: the gate asks what `v.x` is a member of.
+	const int elem_reg = alloc_register(func);
+	set_register_type(func, elem_reg, element);
+	declare_variable(func, stmt->variable, elem_reg, false, stmt);
+	const auto refuse = [&]() {
+		pop_scope(func);
+		func.ir.debug_locals.pop_back(); // the fallback declares it again
+		func.loops.pop_back();
+		free_register(func, elem_reg);
+		return false;
+	};
+
+	std::vector<ArrayWindowPlan> plans;
+	if (!plan_array_windows(stmt, func, plans, iterated)) return refuse();
+	// Packed arrays are shared by Variant copies too. A window written under
+	// another name could be the walked array, behind this window's back.
+	const auto container_of = [&](const std::string& name) -> IRInstruction::TypeHint {
+		if (Variable* local = find_variable(func, name)) return get_register_type(func, local->register_num);
+		if (auto it = m_global_variables.find(name); it != m_global_variables.end()) return m_global_types[it->second];
+		return IRInstruction::TypeHint_NONE;
+	};
+	const bool walked_written = std::any_of(plans.begin(), plans.end(), [&](const ArrayWindowPlan& plan) {
+		return plan.name == iterated && plan.written;
+	});
+	for (const ArrayWindowPlan& plan : plans) {
+		if (plan.name != iterated && (plan.written || walked_written) && container_of(plan.name) == container) {
+			return refuse();
+		}
+	}
+
+	std::vector<FunctionContext::ArrayWindowUse> windows = open_array_windows(plans, stmt, func);
+	FunctionContext::ArrayWindowUse walked;
+	if (!iterated.empty()) {
+		Variable* local = find_variable(func, iterated);
+		auto it = local != nullptr ? func.array_windows.find(local->register_num) : func.array_windows.end();
+		if (it != func.array_windows.end()) walked = it->second;
+	}
+	if (walked.array_reg < 0) {
+		// A value nothing else names: a window of its own, read only.
+		walked.token = func.next_array_window_id++;
+		walked.element_type = element;
+		walked.array_reg = array_reg;
+		func.ir.array_windows.push_back({ walked.token, uint32_t(element), uint8_t(layout) });
+		func.ir.instructions.emplace_back(IROpcode::WINDOW_OPEN, IRValue::imm(walked.token));
+		func.open_array_windows.push_back(walked);
+		windows.push_back(walked);
+	}
+
+	const auto int_const = [&](int64_t value) {
+		const int reg = alloc_register(func);
+		func.ir.instructions.emplace_back(IROpcode::LOAD_IMM, IRValue::reg(reg),
+			IRValue::imm(value)).type_hint = Variant::INT;
+		set_register_type(func, reg, Variant::INT);
+		return reg;
+	};
+	const int index_reg = int_const(0);
+	const int one_reg = int_const(1);
+	const int size_reg = alloc_register(func);
+	IRInstruction size(IROpcode::CALL_SYSCALL);
+	size.operands.push_back(IRValue::reg(size_reg));
+	size.operands.push_back(IRValue::imm(ECALL_ARRAY_WINDOW));
+	size.operands.push_back(IRValue::reg(walked.array_reg));
+	size.type_hint = Variant::INT;
+	func.ir.instructions.push_back(size);
+	set_register_type(func, size_reg, Variant::INT);
+
+	const int scope_id = open_scope(func);
+	func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(loop_label));
+	emit_scope_release(scope_id, func);
+	const int cond_reg = alloc_register(func);
+	func.ir.instructions.emplace_back(IROpcode::CMP_LT, IRValue::reg(cond_reg),
+		IRValue::reg(index_reg), IRValue::reg(size_reg)).type_hint = Variant::INT;
+	set_register_type(func, cond_reg, Variant::BOOL);
+	emit_conditional_branch(IROpcode::BRANCH_ZERO, cond_reg, end_label, func);
+	free_register(func, cond_reg);
+
+	IRInstruction get(IROpcode::WINDOW_GET, IRValue::reg(elem_reg), IRValue::reg(walked.array_reg),
+		IRValue::reg(index_reg));
+	get.operands.push_back(IRValue::imm(walked.token));
+	func.ir.instructions.push_back(get);
+
+	push_scope(func);
+	for (const auto& body_stmt : stmt->body) gen_stmt(body_stmt.get(), func);
+	pop_scope(func);
+
+	func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(continue_label));
+	func.ir.instructions.emplace_back(IROpcode::ADD, IRValue::reg(index_reg),
+		IRValue::reg(index_reg), IRValue::reg(one_reg)).type_hint = Variant::INT;
+	func.ir.instructions.emplace_back(IROpcode::JUMP, ir_label(loop_label));
+	func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(end_label));
+	close_array_windows(windows, func);
+	emit_scope_release(scope_id, func);
+
+	pop_scope(func);
+	for (const FunctionContext::ArrayWindowUse& window : windows) {
+		if (window.written && !window.member.empty()) {
+			LValue member;
+			member.kind = LValue::Kind::GLOBAL;
+			member.name = window.member;
+			store_lvalue(member, window.array_reg, func, stmt);
+		}
+	}
+	func.loops.pop_back();
+	free_register(func, elem_reg);
+	free_register(func, size_reg);
+	free_register(func, one_reg);
+	free_register(func, index_reg);
+	return true;
 }
 
 // `for c in <String>`: the characters come in batches, so the walk costs one
@@ -10800,8 +10942,11 @@ IRInstruction::TypeHint CodeGenerator::array_window_element(const std::string& n
 	return element;
 }
 
-std::vector<CodeGenerator::ArrayWindowPlan> CodeGenerator::plan_array_windows(const ForStmt* stmt,
-	FunctionContext& func)
+// False when the body could observe an array some other way. `iterated` names
+// the array a `for v in a` walks, which needs a window whether or not the body
+// indexes it.
+bool CodeGenerator::plan_array_windows(const ForStmt* stmt, FunctionContext& func,
+	std::vector<ArrayWindowPlan>& plans, const std::string& iterated)
 {
 	struct Use {
 		bool subscripted = false;
@@ -11042,9 +11187,9 @@ std::vector<CodeGenerator::ArrayWindowPlan> CodeGenerator::plan_array_windows(co
 		for (const auto& body_stmt : body) statement(body_stmt.get());
 	};
 	statements(stmt->body);
-	if (escapes) return {};
+	if (escapes) return false;
+	if (!iterated.empty()) uses[iterated].subscripted = true;
 
-	std::vector<ArrayWindowPlan> plans;
 	bool shared_written = false; // an Array window the loop writes
 	size_t shared = 0;
 	bool other_array = false;
@@ -11052,6 +11197,7 @@ std::vector<CodeGenerator::ArrayWindowPlan> CodeGenerator::plan_array_windows(co
 	for (const auto& [name, use] : uses) {
 		const bool candidate = use.subscripted && !use.other && declared.count(name) == 0 &&
 			name != stmt->variable && array_window_element(name, func) != IRInstruction::TypeHint_NONE;
+		if (name == iterated && !candidate) return false;
 		if (candidate) {
 			plans.push_back({ name, use.written });
 			if (static_type(name) == Variant::ARRAY) {
@@ -11060,7 +11206,7 @@ std::vector<CodeGenerator::ArrayWindowPlan> CodeGenerator::plan_array_windows(co
 			}
 			continue;
 		}
-		if (element_receivers.count(name) != 0) return {};
+		if (element_receivers.count(name) != 0) return false;
 		if (!use.subscripted && !use.sized) continue;
 		// Subscripting or sizing anything else must not run a script either.
 		const IRInstruction::TypeHint type = declared.count(name) != 0
@@ -11069,7 +11215,7 @@ std::vector<CodeGenerator::ArrayWindowPlan> CodeGenerator::plan_array_windows(co
 			other_array = true;
 			other_array_written = other_array_written || use.written;
 		} else if (!(value_type(type) || type == Variant::DICTIONARY || is_packed_array_type(type))) {
-			return {};
+			return false;
 		}
 	}
 	// Arrays are handles: two names may hold the same one. A written window must
@@ -11079,14 +11225,22 @@ std::vector<CodeGenerator::ArrayWindowPlan> CodeGenerator::plan_array_windows(co
 			return static_type(plan.name) == Variant::ARRAY;
 		}), plans.end());
 	}
-	return plans;
+	return true;
 }
 
 std::vector<CodeGenerator::FunctionContext::ArrayWindowUse> CodeGenerator::open_array_windows(
 	const ForStmt* stmt, FunctionContext& func)
 {
+	std::vector<ArrayWindowPlan> plans;
+	if (!plan_array_windows(stmt, func, plans)) return {};
+	return open_array_windows(plans, stmt, func);
+}
+
+std::vector<CodeGenerator::FunctionContext::ArrayWindowUse> CodeGenerator::open_array_windows(
+	const std::vector<ArrayWindowPlan>& plans, const ForStmt* stmt, FunctionContext& func)
+{
 	std::vector<FunctionContext::ArrayWindowUse> opened;
-	for (const ArrayWindowPlan& plan : plan_array_windows(stmt, func)) {
+	for (const ArrayWindowPlan& plan : plans) {
 		ArrayWindowLayout layout;
 		const IRInstruction::TypeHint element = array_window_element(plan.name, func, &layout);
 		FunctionContext::ArrayWindowUse use;

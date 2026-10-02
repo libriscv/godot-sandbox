@@ -538,6 +538,68 @@ static void test_typed_array_loops_use_windows() {
 	std::cout << "  \u2713 a counting loop over a typed array takes a window" << std::endl;
 }
 
+static void test_packed_walks_use_windows() {
+	std::cout << "Testing that a walk over a packed array takes a window..." << std::endl;
+
+	const std::string source =
+		"var points: PackedVector2Array\n"
+		"func sum(a: PackedInt32Array) -> int:\n"
+		"\tvar s := 0\n"
+		"\tfor v in a:\n"
+		"\t\ts += v\n"
+		"\treturn s\n"
+		"func xs() -> float:\n"
+		"\tvar s := 0.0\n"
+		"\tfor p in points:\n"
+		"\t\ts += p.x\n"
+		"\treturn s\n"
+		"func doubled(a: PackedFloat32Array):\n"
+		"\tvar i := 0\n"
+		"\tfor v in a:\n"
+		"\t\ta[i] = v * 2.0\n"
+		"\t\ti += 1\n"
+		"\treturn a\n"
+		"func literal() -> int:\n"
+		"\tvar s := 0\n"
+		"\tfor v in PackedByteArray([1, 2, 3]):\n"
+		"\t\tif v == 2:\n"
+		"\t\t\treturn s\n"
+		"\t\ts += v\n"
+		"\treturn s\n"
+		"func aliased(a: PackedInt32Array, b: PackedInt32Array):\n"
+		"\tvar i := 0\n"
+		"\tfor v in a:\n"
+		"\t\tb[i] = v\n"
+		"\t\ti += 1\n";
+	const IRProgram ir = compile_to_ir(source, true);
+
+	for (const char* name : { "sum", "xs", "literal" }) {
+		const IRFunction& func = find_function(ir, name);
+		assert(func.array_windows.size() == 1);
+		assert(count_opcode(func, IROpcode::WINDOW_GET) == 1);
+		assert(count_opcode(func, IROpcode::WINDOW_FLUSH) == 0);
+		// The size, once, from the window syscall.
+		assert(count_syscalls(func, ECALL_ARRAY_WINDOW) == 1);
+		assert(count_vcalls(ir, func, "size") == 0);
+		assert(count_vcalls(ir, func, "get") == 0);
+	}
+
+	// Walked and written: the walk reads the window the body writes.
+	const IRFunction& doubled = find_function(ir, "doubled");
+	assert(doubled.array_windows.size() == 1);
+	assert(count_opcode(doubled, IROpcode::WINDOW_SET) == 1);
+	assert(count_opcode(doubled, IROpcode::WINDOW_FLUSH) == 1);
+	assert(count_element_ecalls(doubled) == 0);
+
+	// Another packed array of the same type, written: it may be the same one.
+	const IRFunction& aliased = find_function(ir, "aliased");
+	assert(aliased.array_windows.empty());
+	assert(count_vcalls(ir, aliased, "get") == 1);
+	compile_to_machine_code(source);
+
+	std::cout << "  \u2713 a walk over a packed array takes a window" << std::endl;
+}
+
 static void test_escaping_loops_keep_element_ecalls() {
 	std::cout << "Testing that a loop that could observe the array takes no window..." << std::endl;
 
@@ -590,6 +652,7 @@ int main() {
 		test_unknown_receiver_keeps_the_vcall();
 		test_typed_array_loops_use_windows();
 		test_escaping_loops_keep_element_ecalls();
+		test_packed_walks_use_windows();
 	} catch (const CompilerException& e) {
 		std::cerr << "Unexpected compiler error: " << e.what() << std::endl;
 		return 1;

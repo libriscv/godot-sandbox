@@ -538,15 +538,29 @@ static void test_globals_do_not_become_self_calls() {
 static void test_iterating_a_non_array() {
 	std::cout << "Testing that a packed array and a String each walk their own way..." << std::endl;
 
-	// Packed array: VCALL size()/get(), not ECALL_ARRAY_SIZE/AT (Array-only).
+	// Packed array: a window, not ECALL_ARRAY_SIZE/AT (Array-only). The
+	// window syscall answers the size; elements come from the frame.
 	const IRProgram packed = compile_to_ir(
 		"func test():\n\tvar p = PackedInt32Array([1, 2])\n\tvar t = 0\n"
 		"\tfor v in p:\n\t\tt += v\n\treturn t\n");
 	const IRFunction& p = find_function(packed, "test");
-	assert(count_vcalls(packed, p, "size") == 1);
-	assert(count_vcalls(packed, p, "get") == 1);
-	// No CALL_SYSCALL: Array-only syscalls would throw.
-	assert(count_opcode(p, IROpcode::CALL_SYSCALL) == 0);
+	assert(count_vcalls(packed, p, "size") == 0);
+	assert(count_vcalls(packed, p, "get") == 0);
+	assert(count_opcode(p, IROpcode::WINDOW_GET) == 1);
+
+	// No window for PackedStringArray, or for a body that could reach the
+	// array: VCALL size()/get().
+	const IRProgram unwindowed = compile_to_ir(
+		"func strings(p: PackedStringArray):\n\tfor v in p:\n\t\tprint(v)\n"
+		"func reached(p: PackedInt32Array):\n\tfor v in p:\n\t\tprint(p)\n");
+	for (const char* name : { "strings", "reached" }) {
+		const IRFunction& f = find_function(unwindowed, name);
+		assert(count_vcalls(unwindowed, f, "size") == 1);
+		assert(count_vcalls(unwindowed, f, "get") == 1);
+		// No CALL_SYSCALL: Array-only syscalls would throw.
+		assert(count_opcode(f, IROpcode::CALL_SYSCALL) == 0);
+		assert(f.array_windows.empty());
+	}
 
 	// Array uses syscalls, not VCALL.
 	const IRProgram array = compile_to_ir(

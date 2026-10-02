@@ -330,6 +330,140 @@ func matmul(a: PackedFloat64Array, b: PackedFloat64Array, n: int) -> PackedFloat
 		assert_almost_eq(c[probe[0] * n + probe[1]], expected, 0.0001, "matmul element %s" % [probe])
 	s.queue_free()
 
+func test_packed_walks():
+	var s := _compile("""
+var points: PackedVector2Array
+
+func sum32(a: PackedInt32Array) -> int:
+	var s := 0
+	for v in a:
+		s += v
+	return s
+
+func sum_bytes(a: PackedByteArray) -> int:
+	var s := 0
+	for v in a:
+		s += v
+	return s
+
+func sum_floats(a: PackedFloat32Array) -> float:
+	var s := 0.0
+	for v in a:
+		s += v
+	return s
+
+func sum_x(a: PackedVector3Array) -> float:
+	var s := 0.0
+	for p in a:
+		s += p.x + p.z
+	return s
+
+func reds(a: PackedColorArray) -> float:
+	var s := 0.0
+	for c in a:
+		s += c.r
+	return s
+
+func doubled(a: PackedInt64Array) -> PackedInt64Array:
+	var i := 0
+	for v in a:
+		a[i] = v * 2
+		i += 1
+	return a
+
+func rewrites_ahead(a: PackedInt32Array) -> int:
+	# The walk sees what the body wrote further along, as GDScript's does.
+	var s := 0
+	var i := 0
+	for v in a:
+		if i + 1 < a.size():
+			a[i + 1] = v + a[i + 1]
+		s += v
+		i += 1
+	return s
+
+func until(a: PackedInt32Array, stop: int) -> int:
+	var n := 0
+	for v in a:
+		if v == stop:
+			break
+		n += 1
+	return n
+
+func first_over(a: PackedInt32Array, limit: int) -> int:
+	for v in a:
+		if v > limit:
+			return v
+	return -1
+
+func literal() -> int:
+	var s := 0
+	for v in PackedInt32Array([1, 2, 3]):
+		s += v
+	return s
+
+func copy_into(a: PackedInt32Array, b: PackedInt32Array) -> PackedInt32Array:
+	var i := 0
+	for v in a:
+		b[i] = v + 1
+		i += 1
+	return b
+
+func with_call(a: PackedInt32Array) -> int:
+	var s := 0
+	for v in a:
+		s += abs(v) + _twice(v)
+	return s
+
+func _twice(x: int) -> int:
+	return 2 * x
+
+func points_x() -> float:
+	var s := 0.0
+	for p in points:
+		s += p.x
+	return s
+""")
+	for n in [0, 1, 255, 256, 257, 1000]:
+		var a := _ints(n)
+		var expected := 0
+		for v in a:
+			expected += v
+		assert_eq(s.vmcallv("sum32", a), expected, "PackedInt32Array of %d" % n)
+		assert_almost_eq(s.vmcallv("sum_floats", PackedFloat32Array(Array(a))), float(expected), 0.001,
+			"PackedFloat32Array of %d" % n)
+		var doubled: PackedInt64Array = s.vmcallv("doubled", PackedInt64Array(Array(a)))
+		assert_eq(doubled.size(), n, "the walk writes back every window")
+		var doubled_sum := 0
+		for v in doubled:
+			doubled_sum += v
+		assert_eq(doubled_sum, expected * 2, "doubled in place, %d elements" % n)
+	var bytes := PackedByteArray()
+	var byte_sum := 0
+	for i in 600:
+		bytes.append((i * 7) & 255)
+		byte_sum += (i * 7) & 255
+	assert_eq(s.vmcallv("sum_bytes", bytes), byte_sum, "PackedByteArray elements are unsigned")
+	var vectors := PackedVector3Array()
+	var colors := PackedColorArray()
+	for i in 300:
+		vectors.append(Vector3(i, -1, 0.5))
+		colors.append(Color(0.25, 1, 1))
+	assert_almost_eq(s.vmcallv("sum_x", vectors), 299.0 * 300.0 / 2.0 + 150.0, 0.01, "Vector3 elements")
+	assert_almost_eq(s.vmcallv("reds", colors), 75.0, 0.001, "Color elements")
+	var ones := PackedInt32Array()
+	ones.resize(600)
+	ones.fill(1)
+	assert_eq(s.vmcallv("rewrites_ahead", ones), 600 * 601 / 2, "writes ahead of the walk are seen by it")
+	var stops := _ints(700)
+	assert_eq(s.vmcallv("until", stops, stops[400]), 400, "break")
+	assert_eq(s.vmcallv("first_over", stops, 1000), 1001, "return")
+	assert_eq(s.vmcallv("literal"), 6, "a walk over a value nothing names")
+	assert_eq(s.vmcallv("copy_into", PackedInt32Array([1, 2, 3]), PackedInt32Array([0, 0, 0])),
+		PackedInt32Array([2, 3, 4]), "another array of the same type keeps the ordinary walk")
+	assert_eq(s.vmcallv("with_call", PackedInt32Array([1, -2, 3])), 6 + 4, "a call keeps the ordinary walk")
+	s.queue_free()
+
 func test_loops_that_must_not_take_a_window():
 	var s := _compile("""
 func helper(a: PackedInt32Array) -> int:
@@ -389,6 +523,18 @@ func clear_until(limit: int) -> int:
 func scale_weights(f: float) -> void:
 	for i in weights.size():
 		weights[i] *= f
+
+func walk_total() -> int:
+	var s := 0
+	for v in data:
+		s += v
+	return s
+
+func walk_negate() -> void:
+	var i := 0
+	for v in data:
+		data[i] = -v
+		i += 1
 """)
 	assert_eq(script.get_compile_error(), "", "the script should compile")
 	var node := Node.new()
@@ -405,6 +551,14 @@ func scale_weights(f: float) -> void:
 	data = node.get("data")
 	assert_eq(data[9], 0, "writes before the return reach the member")
 	assert_eq(data[10], 100, "elements after it are untouched")
+	var walked := 0
+	for v in node.get("data"):
+		walked += v
+	assert_eq(node.call("walk_total"), walked, "a member walked")
+	node.call("walk_negate")
+	data = node.get("data")
+	assert_eq(data[299], -299 * 299, "a member walked and written is stored back")
+	assert_eq(node.call("walk_total"), -walked, "every element of it")
 	node.call("scale_weights", 2.0)
 	assert_eq(node.get("weights"), [1.0, 3.0], "an Array[float] member")
 	node.free()
