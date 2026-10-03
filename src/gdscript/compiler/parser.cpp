@@ -1843,6 +1843,7 @@ StmtPtr Parser::parse_expr_or_assign_stmt() {
 		}
 		advance();
 
+		const Expr* read_expr = read.get();
 		ExprPtr rhs = parse_expression();
 		ExprPtr combined = make_binary(std::move(read), entry.op, std::move(rhs));
 		consume_statement_end("Expected newline after assignment");
@@ -1850,14 +1851,16 @@ StmtPtr Parser::parse_expr_or_assign_stmt() {
 		if (auto* var_expr = dynamic_cast<VariableExpr*>(lhs.get())) {
 			return std::make_unique<AssignStmt>(var_expr->name, std::move(combined));
 		}
-		return std::make_unique<AssignStmt>(std::move(lhs), std::move(combined));
+		auto assign = std::make_unique<AssignStmt>(std::move(lhs), std::move(combined));
+		assign->compound_read = read_expr;
+		return assign;
 	}
 
 	consume_statement_end("Expected newline after expression");
 	return std::make_unique<ExprStmt>(std::move(lhs));
 }
 
-ExprPtr Parser::clone_lvalue(const Expr* expr) {
+ExprPtr Parser::clone_lvalue(const Expr* expr, bool in_subscript) {
 	// Only pure lookups are cloneable; calls would re-evaluate.
 	if (auto* var = dynamic_cast<const VariableExpr*>(expr)) {
 		return make_like<VariableExpr>(*expr, var->name);
@@ -1875,7 +1878,7 @@ ExprPtr Parser::clone_lvalue(const Expr* expr) {
 		std::vector<ExprPtr> arguments;
 		arguments.reserve(call->arguments.size());
 		for (const auto& argument : call->arguments) {
-			ExprPtr copy = clone_lvalue(argument.get());
+			ExprPtr copy = clone_lvalue(argument.get(), in_subscript);
 			if (!copy) {
 				return nullptr;
 			}
@@ -1889,7 +1892,7 @@ ExprPtr Parser::clone_lvalue(const Expr* expr) {
 		if (member->is_method_call || member->safe) {
 			return nullptr;
 		}
-		ExprPtr object = clone_lvalue(member->object.get());
+		ExprPtr object = clone_lvalue(member->object.get(), in_subscript);
 		if (!object) {
 			return nullptr;
 		}
@@ -1897,12 +1900,37 @@ ExprPtr Parser::clone_lvalue(const Expr* expr) {
 			std::vector<ExprPtr>{}, false);
 	}
 	if (auto* index = dynamic_cast<const IndexExpr*>(expr)) {
-		ExprPtr object = clone_lvalue(index->object.get());
-		ExprPtr subscript = clone_lvalue(index->index.get());
+		ExprPtr object = clone_lvalue(index->object.get(), in_subscript);
+		ExprPtr subscript = clone_lvalue(index->index.get(), true);
 		if (!object || !subscript) {
 			return nullptr;
 		}
 		return make_like<IndexExpr>(*expr, std::move(object), std::move(subscript));
+	}
+	// Only inside a subscript: `(a + b) += 1` is no assignment target. The clone
+	// is never evaluated (codegen reuses the target's key, see compound_read),
+	// it only gives the read its shape. `in` excluded: on an Object it calls
+	// into the engine.
+	if (!in_subscript) {
+		return nullptr;
+	}
+	if (auto* binary = dynamic_cast<const BinaryExpr*>(expr)) {
+		if (binary->op == BinaryExpr::Op::IN) {
+			return nullptr;
+		}
+		ExprPtr left = clone_lvalue(binary->left.get(), true);
+		ExprPtr right = clone_lvalue(binary->right.get(), true);
+		if (!left || !right) {
+			return nullptr;
+		}
+		return make_like<BinaryExpr>(*expr, std::move(left), binary->op, std::move(right));
+	}
+	if (auto* unary = dynamic_cast<const UnaryExpr*>(expr)) {
+		ExprPtr operand = clone_lvalue(unary->operand.get(), true);
+		if (!operand) {
+			return nullptr;
+		}
+		return make_like<UnaryExpr>(*expr, unary->op, std::move(operand));
 	}
 	return nullptr;
 }

@@ -1352,6 +1352,8 @@ bool RISCVCodeGen::operand_is_read_from_register(const IRInstruction& instr, siz
 		case IROpcode::DICT_SET:
 			return index == 1 && instr.operands.size() == 3 &&
 				key_is_fixed_int(instr.operands[1].reg_index());
+		case IROpcode::DICT_OPERATE:
+			return index == 1 && key_is_fixed_int(instr.operands[1].reg_index());
 		case IROpcode::CALL_SYSCALL:
 			return index == 4 && instr.operands.size() == 5 &&
 				instr.operands[1].type == IRValue::Type::IMMEDIATE &&
@@ -2143,6 +2145,43 @@ void RISCVCodeGen::gen_dict_const(const IRInstruction& instr) {
 	if (!is_set && !is_get) {
 		emit_syscall_result(instr.operands[0].reg_index(), REG_A0, value_offset, Variant::BOOL);
 	}
+}
+
+void RISCVCodeGen::gen_dict_operate(const IRInstruction& instr) {
+	const bool constant_key = instr.opcode == IROpcode::DICT_OPERATE_CONST;
+	const int dict_vreg = instr.operands[0].reg_index();
+	const int dict_offset = get_variant_stack_offset(dict_vreg);
+	const int operand_offset = get_variant_stack_offset(instr.operands[2].reg_index());
+
+	spill_around_syscall({REG_A0, REG_A1, REG_A2, REG_A3, REG_A4, REG_A5});
+	if (constant_key) {
+		const int string_idx = int(instr.operands[1].immediate());
+		if (string_idx < 0 || size_t(string_idx) >= m_string_constants->size()) {
+			throw CompilerException(ErrorType::RISCV_codegen_ERROR,
+				"Dictionary constant key index out of range");
+		}
+		const std::string &key = (*m_string_constants)[size_t(string_idx)];
+		emit_li(REG_A0, dictionary_op(instr.operands[4].immediate() != 0
+			? Dictionary_Op::OPERATE_RAW_STR : Dictionary_Op::OPERATE_RAW));
+		emit_container_handle(REG_A1, dict_vreg, dict_offset);
+		emit_la(REG_A2, rodata_string(key));
+		emit_li(REG_A3, int64_t(key.size()));
+	} else {
+		const int key_vreg = instr.operands[1].reg_index();
+		const int key_offset = get_variant_stack_offset(key_vreg);
+		const bool int_key = key_is_fixed_int(key_vreg);
+		emit_li(REG_A0, dictionary_op(int_key ? Dictionary_Op::OPERATE_INT_KEY
+			: Dictionary_Op::OPERATE));
+		emit_container_handle(REG_A1, dict_vreg, dict_offset);
+		if (int_key) {
+			emit_int_key(key_vreg, key_offset);
+		} else {
+			emit_add_offset(REG_A2, REG_SP, key_offset);
+		}
+	}
+	emit_add_offset(REG_A4, REG_SP, operand_offset);
+	emit_li(REG_A5, instr.operands[3].immediate());
+	emit_syscall(ECALL_DICTIONARY_OPS, dictionary_op(Dictionary_Op::OPERATE));
 }
 
 void RISCVCodeGen::gen_struct_check(const IRInstruction& instr) {
@@ -3149,29 +3188,13 @@ void RISCVCodeGen::gen_binary_op(const IRInstruction& instr) {
 	{
 		const int lhs_offset = get_variant_stack_offset(instr.operands[1].reg_index());
 		const int rhs_offset = get_variant_stack_offset(instr.operands[2].reg_index());
-		int variant_op = instr.opcode == IROpcode::ADD ? 6 :
-			instr.opcode == IROpcode::SUB ? 7 :
-			instr.opcode == IROpcode::MUL ? 8 :
-			instr.opcode == IROpcode::DIV ? 9 : 12;
-		emit_variant_eval(dst_offset, lhs_offset, rhs_offset, variant_op);
+		emit_variant_eval(dst_offset, lhs_offset, rhs_offset, ir_variant_operator(instr.opcode));
 		return;
 	}
 
-	int variant_op;
-	switch (instr.opcode) {
-		case IROpcode::ADD: variant_op = 6; break;  // OP_ADD
-		case IROpcode::SUB: variant_op = 7; break;  // OP_SUBTRACT
-		case IROpcode::MUL: variant_op = 8; break;  // OP_MULTIPLY
-		case IROpcode::DIV: variant_op = 9; break;  // OP_DIVIDE
-		case IROpcode::MOD: variant_op = 12; break; // OP_MODULE
-		case IROpcode::SHL: variant_op = 14; break; // OP_SHIFT_LEFT
-		case IROpcode::SHR: variant_op = 15; break; // OP_SHIFT_RIGHT
-		case IROpcode::BIT_AND: variant_op = 16; break; // OP_BIT_AND
-		case IROpcode::BIT_OR: variant_op = 17; break;  // OP_BIT_OR
-		case IROpcode::BIT_XOR: variant_op = 18; break; // OP_BIT_XOR
-		case IROpcode::POW: variant_op = 13; break; // OP_POWER
-		case IROpcode::IN: variant_op = 24; break;  // OP_IN
-		default: variant_op = 6; break;
+	int variant_op = ir_variant_operator(instr.opcode);
+	if (variant_op < 0) {
+		variant_op = 6; // OP_ADD
 	}
 
 	if (lhs_is_reg && rhs_is_reg) {
@@ -4392,6 +4415,11 @@ void RISCVCodeGen::gen_instruction(const IRInstruction& instr) {
 			gen_dict_const(instr);
 			break;
 
+		case IROpcode::DICT_OPERATE:
+		case IROpcode::DICT_OPERATE_CONST:
+			gen_dict_operate(instr);
+			break;
+
 		case IROpcode::STRUCT_CHECK:
 			gen_struct_check(instr);
 			break;
@@ -5076,6 +5104,8 @@ bool RISCVCodeGen::opcode_clobbers_abi_registers(IROpcode op) {
 		case IROpcode::DICT_SET_CONST:
 		case IROpcode::DICT_SET_CONST_STR:
 		case IROpcode::DICT_HAS_CONST:
+		case IROpcode::DICT_OPERATE:
+		case IROpcode::DICT_OPERATE_CONST:
 		case IROpcode::STRUCT_CHECK:
 		case IROpcode::AWAIT:
 		case IROpcode::CALL:
@@ -5446,6 +5476,8 @@ void RISCVCodeGen::plan_global_handles(const IRFunction& func) {
 			case IROpcode::ARRAY_GET:
 				return { 1, 2 };
 			case IROpcode::DICT_SET:
+			case IROpcode::DICT_OPERATE:
+			case IROpcode::DICT_OPERATE_CONST:
 				return { 0, -1 };
 			case IROpcode::ARRAY_APPEND:
 				return { 1, -1 };
@@ -7846,6 +7878,8 @@ static bool leaves_nothing_scoped(const IRInstruction& instr) {
 		case IROpcode::ARRAY_SET:
 		case IROpcode::ARRAY_APPEND:
 		case IROpcode::DICT_SET:
+		case IROpcode::DICT_OPERATE:
+		case IROpcode::DICT_OPERATE_CONST:
 		// The mutated value goes back into the guest's own slot.
 		case IROpcode::VARIANT_SET:
 			return true;

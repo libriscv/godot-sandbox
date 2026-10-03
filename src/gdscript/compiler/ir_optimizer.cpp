@@ -10,7 +10,9 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <functional>
 #include <iostream>
+#include <optional>
 
 namespace gdscript {
 
@@ -78,7 +80,8 @@ const std::vector<IRPass>& IROptimizer::pipeline() {
 		{ "unreachable-code", &IROptimizer::eliminate_unreachable_code },
 		{ "copy-propagation", &IROptimizer::copy_propagation },
 		{ "enhanced-copy-propagation", &IROptimizer::enhanced_copy_propagation },
-		{ "scalar-replacement", &IROptimizer::scalar_replace_structs },
+		{ "scalar-replacement", &IROptimizer::scalar_replace_dictionaries },
+		{ "dictionary-updates", &IROptimizer::fuse_dictionary_updates },
 		{ "lazy-strings", &IROptimizer::sink_lazy_strings },
 		{ "licm", &IROptimizer::loop_invariant_code_motion },
 		{ "peephole", &IROptimizer::peephole_optimization },
@@ -848,6 +851,8 @@ void IROptimizer::fold_instruction(const IRInstruction& instr, std::vector<IRIns
 		case IROpcode::DICT_SET:
 		case IROpcode::DICT_SET_CONST:
 		case IROpcode::DICT_SET_CONST_STR:
+		case IROpcode::DICT_OPERATE:
+		case IROpcode::DICT_OPERATE_CONST:
 			emit(instr);
 			break;
 
@@ -1850,18 +1855,66 @@ static bool reads_pending_store(const IRInstruction& instr,
 	return false;
 }
 
-// Replace a non-escaping struct Dictionary with snapshots of its fields.
-// Immutable structs whose instance and aliases each have one static definition
-// are safe across control flow: a MAKE in a loop refreshes every snapshot on
-// each pass. Mutable structs remain limited to straight-line code because a
-// field written on only one incoming edge would require an SSA phi node.
-bool IROptimizer::scalar_replace_structs(IRFunction& func) {
+// Replace a non-escaping Dictionary (struct or constant-keyed literal) with
+// one register per key. Two shapes: flow-wide (single-def aliases, no use
+// above the MAKE) and straight-line (no branches below, aliases end on
+// overwrite). Keys may only be added before the first branch after the MAKE.
+// Escaping use (return, call, erase, computed key) disqualifies.
+bool IROptimizer::scalar_replace_dictionaries(IRFunction& func) {
+	using Key = std::string; // "s" + String text, or "i" + decimal int
 	bool changed = false;
 	for (;;) {
-		bool replaced_one = false;
-		for (size_t make_at = 0; make_at < func.instructions.size(); make_at++) {
-			const IRInstruction& make = func.instructions[make_at];
-			if (make.opcode != IROpcode::MAKE_DICTIONARY_KEYED || make.operands.size() < 2) {
+		const std::vector<IRInstruction>& code = func.instructions;
+		const int params = int(func.parameters.size());
+		int nregs = std::max(func.max_registers, params);
+		for (const IRInstruction& instr : code) {
+			for (const IRValue& operand : instr.operands) {
+				if (operand.type == IRValue::Type::REGISTER) {
+					nregs = std::max(nregs, operand.reg_index() + 1);
+				}
+			}
+		}
+		std::vector<std::vector<size_t>> defs(static_cast<size_t>(nregs));
+		for (size_t i = 0; i < code.size(); i++) {
+			for (size_t operand = 0; operand < code[i].operands.size(); operand++) {
+				if (ir_writes_operand(code[i], operand)) {
+					defs[size_t(code[i].operands[operand].reg_index())].push_back(i);
+				}
+			}
+		}
+		const auto def_count = [&](int reg) {
+			return defs[size_t(reg)].size() + (reg < params ? 1 : 0);
+		};
+		const auto string_key = [&](const IRValue& index) -> std::optional<Key> {
+			if (m_string_constants == nullptr || index.type != IRValue::Type::IMMEDIATE ||
+				index.immediate() < 0 || size_t(index.immediate()) >= m_string_constants->size())
+			{
+				return std::nullopt;
+			}
+			return "s" + (*m_string_constants)[size_t(index.immediate())];
+		};
+		// Bool/float literals hash differently from the int they equal.
+		const auto register_key = [&](const IRValue& value) -> std::optional<Key> {
+			if (value.type != IRValue::Type::REGISTER || def_count(value.reg_index()) != 1 ||
+				value.reg_index() < params)
+			{
+				return std::nullopt;
+			}
+			const IRInstruction& def = code[defs[size_t(value.reg_index())][0]];
+			if (def.opcode == IROpcode::LOAD_STRING) {
+				return string_key(def.operands[1]);
+			}
+			if (def.opcode == IROpcode::LOAD_IMM && def.type_hint == Variant::INT) {
+				return "i" + std::to_string(def.operands[1].immediate());
+			}
+			return std::nullopt;
+		};
+
+		bool replaced = false;
+		for (size_t make_at = 0; make_at < code.size() && !replaced; make_at++) {
+			const IRInstruction& make = code[make_at];
+			const bool keyed = make.opcode == IROpcode::MAKE_DICTIONARY_KEYED;
+			if ((!keyed && make.opcode != IROpcode::MAKE_DICTIONARY) || make.operands.size() < 2) {
 				continue;
 			}
 			const int64_t count = make.operands[1].immediate();
@@ -1869,199 +1922,223 @@ bool IROptimizer::scalar_replace_structs(IRFunction& func) {
 				continue;
 			}
 			const int root = make.operands[0].reg_index();
-			if (root == 0) {
-				continue; // r0 is the implicit return value.
-			}
-
-			std::vector<std::pair<int64_t, int>> initial_fields;
-			std::unordered_set<int64_t> declared_keys;
-			for (int64_t i = 0; i < count; i++) {
-				const int64_t key = make.operands[size_t(2 + i * 2)].immediate();
-				initial_fields.emplace_back(key,
-					make.operands[size_t(3 + i * 2)].reg_index());
-				declared_keys.insert(key);
-			}
-
-			// First try the whole-function rule. Discover every copy of the
-			// instance, then require one definition for each such register and no
-			// operation except declared field reads.
-			std::unordered_set<int> aliases{root};
-			bool grew = true;
-			while (grew) {
-				grew = false;
-				for (const IRInstruction& instr : func.instructions) {
-					if (instr.opcode == IROpcode::MOVE && instr.operands.size() == 2 &&
-						aliases.count(instr.operands[1].reg_index()) != 0)
-					{
-						grew |= aliases.insert(instr.operands[0].reg_index()).second;
-					}
+			std::vector<std::pair<Key, IRValue>> initial;
+			std::unordered_set<Key> distinct;
+			bool constant_keys = true;
+			for (int64_t i = 0; i < count && constant_keys; i++) {
+				const IRValue& key_operand = make.operands[size_t(2 + i * 2)];
+				const std::optional<Key> key = keyed ? string_key(key_operand) : register_key(key_operand);
+				constant_keys = key.has_value() && distinct.insert(*key).second;
+				if (constant_keys) {
+					initial.emplace_back(*key, make.operands[size_t(3 + i * 2)]);
 				}
 			}
-
-			std::unordered_map<int, int> definitions;
-			for (int alias : aliases) {
-				definitions[alias] = alias < static_cast<int>(func.parameters.size()) ? 1 : 0;
-			}
-			for (const IRInstruction& instr : func.instructions) {
-				for (size_t operand = 0; operand < instr.operands.size(); operand++) {
-					if (ir_writes_operand(instr, operand)) {
-						const int reg = instr.operands[operand].reg_index();
-						if (aliases.count(reg) != 0) {
-							definitions[reg]++;
-						}
-					}
-				}
-			}
-
-			bool immutable_safe = aliases.count(IRFunction::RETURN_REGISTER) == 0;
-			for (int alias : aliases) {
-				immutable_safe &= definitions[alias] == 1;
-			}
-			for (const IRInstruction& instr : func.instructions) {
-				if (!immutable_safe) {
-					break;
-				}
-				std::vector<int> reads;
-				ir_collect_read_registers(instr, reads);
-				for (int reg : reads) {
-					if (aliases.count(reg) == 0) {
-						continue;
-					}
-					const bool alias_copy = instr.opcode == IROpcode::MOVE &&
-						instr.operands.size() == 2 &&
-						instr.operands[1].reg_index() == reg &&
-						aliases.count(instr.operands[0].reg_index()) != 0;
-					const bool field_read = instr.opcode == IROpcode::DICT_GET_CONST &&
-						instr.operands.size() == 3 &&
-						instr.operands[1].reg_index() == reg &&
-						declared_keys.count(instr.operands[2].immediate()) != 0;
-					if (!alias_copy && !field_read) {
-						immutable_safe = false;
-						break;
-					}
-				}
-			}
-
-			// Preserve the existing mutable straight-line case. Track aliases in
-			// instruction order, and reject any overwrite of an alias register.
-			bool straight_line_safe = true;
-			std::unordered_set<int> straight_aliases{root};
-			for (size_t i = make_at + 1;
-				i < func.instructions.size() && straight_line_safe; i++)
-			{
-				const IRInstruction& instr = func.instructions[i];
-				if (ir_is_control_flow(instr.opcode)) {
-					std::vector<int> reads;
-					ir_collect_read_registers(instr, reads);
-					const bool reads_alias = std::any_of(reads.begin(), reads.end(),
-						[&](int reg) { return straight_aliases.count(reg) != 0; });
-					if (instr.opcode == IROpcode::RETURN && !reads_alias) {
-						continue;
-					}
-					straight_line_safe = false;
-					break;
-				}
-
-				if (instr.opcode == IROpcode::MOVE &&
-					straight_aliases.count(instr.operands[1].reg_index()) != 0) {
-					const int alias = instr.operands[0].reg_index();
-					if (alias == IRFunction::RETURN_REGISTER) {
-						straight_line_safe = false;
-					} else {
-						straight_aliases.insert(alias);
-					}
-					continue;
-				}
-				if (instr.opcode == IROpcode::DICT_GET_CONST &&
-					straight_aliases.count(instr.operands[1].reg_index()) != 0 &&
-					declared_keys.count(instr.operands[2].immediate()) != 0) {
-					continue;
-				}
-				if (instr.opcode == IROpcode::DICT_SET_CONST &&
-					straight_aliases.count(instr.operands[0].reg_index()) != 0 &&
-					declared_keys.count(instr.operands[1].immediate()) != 0) {
-					continue;
-				}
-
-				std::vector<int> reads;
-				ir_collect_read_registers(instr, reads);
-				for (int reg : reads) {
-					if (straight_aliases.count(reg) != 0) {
-						straight_line_safe = false;
-						break;
-					}
-				}
-				for (size_t operand = 0;
-					operand < instr.operands.size() && straight_line_safe; operand++)
-				{
-					if (ir_writes_operand(instr, operand) &&
-						straight_aliases.count(instr.operands[operand].reg_index()) != 0)
-					{
-						straight_line_safe = false;
-					}
-				}
-			}
-			if (!immutable_safe && !straight_line_safe) {
+			if (!constant_keys) {
 				continue;
 			}
 
-			int next_register = func.max_registers;
-			for (const IRInstruction& instr : func.instructions) {
-				for (const IRValue& operand : instr.operands) {
-					if (operand.type == IRValue::Type::REGISTER) {
-						next_register = std::max(next_register, operand.reg_index() + 1);
+			const auto rewrite = [&](bool flow_wide, std::vector<IRInstruction>& fresh) {
+				std::unordered_set<int> aliases{root};
+				std::vector<int> reads;
+				if (flow_wide && root == IRFunction::RETURN_REGISTER) {
+					return false;
+				}
+				if (flow_wide) {
+					for (bool grew = true; grew;) {
+						grew = false;
+						for (const IRInstruction& instr : code) {
+							if (instr.opcode == IROpcode::MOVE && instr.operands.size() == 2 &&
+								aliases.count(instr.operands[1].reg_index()) != 0)
+							{
+								grew |= aliases.insert(instr.operands[0].reg_index()).second;
+							}
+						}
+					}
+					for (int alias : aliases) {
+						if (alias == IRFunction::RETURN_REGISTER || def_count(alias) != 1) {
+							return false;
+						}
+					}
+					for (size_t i = 0; i < make_at; i++) {
+						reads.clear();
+						ir_collect_read_registers(code[i], reads);
+						for (int reg : reads) {
+							if (aliases.count(reg) != 0) {
+								return false;
+							}
+						}
 					}
 				}
-			}
-			std::unordered_map<int64_t, int> fields;
-			std::vector<IRInstruction> fresh;
-			fresh.reserve(func.instructions.size() + initial_fields.size());
-			fresh.insert(fresh.end(), func.instructions.begin(),
-				func.instructions.begin() + static_cast<std::ptrdiff_t>(make_at));
-			for (const auto& [key, source] : initial_fields) {
-				const int snapshot = next_register++;
-				fields[key] = snapshot;
-				IRInstruction move(IROpcode::MOVE, IRValue::reg(snapshot), IRValue::reg(source));
-				move.line = make.line;
-				fresh.push_back(std::move(move));
-			}
 
-			std::unordered_set<int> active_aliases{root};
-			for (size_t i = make_at + 1; i < func.instructions.size(); i++) {
-				const IRInstruction& instr = func.instructions[i];
-				const std::unordered_set<int>& current_aliases = immutable_safe ? aliases : active_aliases;
-				if (instr.opcode == IROpcode::MOVE &&
-					current_aliases.count(instr.operands[1].reg_index()) != 0) {
-					if (!immutable_safe) {
-						active_aliases.insert(instr.operands[0].reg_index());
+				int next_register = nregs;
+				std::unordered_map<Key, int> fields;
+				fresh.clear();
+				fresh.reserve(code.size() + initial.size());
+				fresh.insert(fresh.end(), code.begin(), code.begin() + std::ptrdiff_t(make_at));
+				for (const auto& [key, value] : initial) {
+					const int field = next_register++;
+					fields[key] = field;
+					IRInstruction move(IROpcode::MOVE, IRValue::reg(field), value);
+					move.line = make.line;
+					fresh.push_back(std::move(move));
+				}
+
+				bool in_prefix = true;
+				for (size_t i = make_at + 1; i < code.size(); i++) {
+					const IRInstruction& instr = code[i];
+					const bool control_flow = ir_is_control_flow(instr.opcode);
+					in_prefix &= !control_flow;
+					reads.clear();
+					ir_collect_read_registers(instr, reads);
+					const size_t alias_reads = size_t(std::count_if(reads.begin(), reads.end(),
+						[&](int reg) { return aliases.count(reg) != 0; }));
+					if (!flow_wide) {
+						if (control_flow && !(instr.opcode == IROpcode::RETURN && alias_reads == 0)) {
+							return false;
+						}
 					}
-					continue;
+					if (alias_reads == 0) {
+						for (size_t operand = 0; operand < instr.operands.size(); operand++) {
+							if (ir_writes_operand(instr, operand)) {
+								aliases.erase(instr.operands[operand].reg_index());
+							}
+						}
+						fresh.push_back(instr);
+						continue;
+					}
+					if (alias_reads != 1) {
+						return false;
+					}
+
+					const auto alias_at = [&](size_t operand) {
+						return operand < instr.operands.size() &&
+							instr.operands[operand].type == IRValue::Type::REGISTER &&
+							aliases.count(instr.operands[operand].reg_index()) != 0;
+					};
+					const auto emit = [&](IRInstruction replacement) {
+						replacement.line = instr.line;
+						fresh.push_back(std::move(replacement));
+					};
+					const auto read_field = [&](const std::optional<Key>& key) {
+						const auto field = key ? fields.find(*key) : fields.end();
+						if (field == fields.end()) {
+							return false;
+						}
+						IRInstruction move(IROpcode::MOVE, instr.operands[0], IRValue::reg(field->second));
+						move.type_hint = instr.opcode == IROpcode::DICT_GET_CONST
+							? instr.type_hint : IRInstruction::TypeHint_NONE;
+						emit(std::move(move));
+						return true;
+					};
+					const auto write_field = [&](const std::optional<Key>& key, const IRValue& value) {
+						if (!key) {
+							return false;
+						}
+						auto field = fields.find(*key);
+						if (field == fields.end()) {
+							if (!in_prefix) {
+								return false;
+							}
+							field = fields.emplace(*key, next_register++).first;
+						}
+						emit(IRInstruction(IROpcode::MOVE, IRValue::reg(field->second), value));
+						return true;
+					};
+					const auto answer_has = [&](const std::optional<Key>& key) {
+						if (!key) {
+							return false;
+						}
+						IRInstruction load(IROpcode::LOAD_BOOL, instr.operands[0],
+							IRValue::imm(fields.count(*key) != 0 ? 1 : 0));
+						load.type_hint = Variant::BOOL;
+						emit(std::move(load));
+						return true;
+					};
+
+					bool handled = false;
+					switch (instr.opcode) {
+						case IROpcode::MOVE:
+							if (alias_at(1)) {
+								const int copy = instr.operands[0].reg_index();
+								if (copy == IRFunction::RETURN_REGISTER) {
+									return false;
+								}
+								aliases.insert(copy);
+								handled = true;
+							}
+							break;
+						case IROpcode::DICT_GET_CONST:
+							handled = alias_at(1) && read_field(string_key(instr.operands[2]));
+							break;
+						case IROpcode::DICT_SET_CONST:
+						case IROpcode::DICT_SET_CONST_STR:
+							handled = alias_at(0) && write_field(string_key(instr.operands[1]), instr.operands[2]);
+							break;
+						case IROpcode::DICT_SET:
+							handled = alias_at(0) && write_field(register_key(instr.operands[1]), instr.operands[2]);
+							break;
+						case IROpcode::DICT_HAS_CONST:
+							handled = alias_at(1) && answer_has(string_key(instr.operands[2]));
+							break;
+						case IROpcode::IN:
+							handled = alias_at(2) && answer_has(register_key(instr.operands[1]));
+							break;
+						case IROpcode::CALL_SYSCALL: {
+							if (instr.operands.size() < 4 || !alias_at(3) ||
+								instr.operands[1].immediate() != ECALL_DICTIONARY_OPS)
+							{
+								break;
+							}
+							const int64_t op = instr.operands[2].immediate();
+							if (op == dictionary_op(Dictionary_Op::GET) && instr.operands.size() == 5) {
+								handled = read_field(register_key(instr.operands[4]));
+							} else if (op == dictionary_op(Dictionary_Op::HAS) && instr.operands.size() == 5) {
+								handled = answer_has(register_key(instr.operands[4]));
+							} else if (op == dictionary_op(Dictionary_Op::GET_SIZE) && instr.operands.size() == 4) {
+								IRInstruction load(IROpcode::LOAD_IMM, instr.operands[0],
+									IRValue::imm(int64_t(fields.size())));
+								load.type_hint = Variant::INT;
+								emit(std::move(load));
+								handled = true;
+							} else if (op == dictionary_op(Dictionary_Op::GET_OR_DEFAULT) && instr.operands.size() == 6) {
+								const std::optional<Key> key = register_key(instr.operands[4]);
+								if (key && fields.count(*key) == 0) {
+									emit(IRInstruction(IROpcode::MOVE, instr.operands[0], instr.operands[5]));
+									handled = true;
+								} else {
+									handled = read_field(key);
+								}
+							}
+							break;
+						}
+						default:
+							break;
+					}
+					if (!handled) {
+						return false;
+					}
+					if (instr.opcode != IROpcode::MOVE) {
+						for (size_t operand = 0; operand < instr.operands.size(); operand++) {
+							if (ir_writes_operand(instr, operand)) {
+								aliases.erase(instr.operands[operand].reg_index());
+							}
+						}
+					}
 				}
-				if (instr.opcode == IROpcode::DICT_GET_CONST &&
-					current_aliases.count(instr.operands[1].reg_index()) != 0) {
-					IRInstruction move(IROpcode::MOVE, instr.operands[0],
-						IRValue::reg(fields.at(instr.operands[2].immediate())));
-					move.type_hint = instr.type_hint;
-					move.line = instr.line;
-					fresh.push_back(std::move(move));
-					continue;
+				func.max_registers = std::max(func.max_registers, next_register);
+				return true;
+			};
+
+			std::vector<IRInstruction> fresh;
+			for (bool flow_wide : { true, false }) {
+				if (rewrite(flow_wide, fresh)) {
+					replace_instructions(func, std::move(fresh));
+					changed = replaced = true;
+					break;
 				}
-				if (instr.opcode == IROpcode::DICT_SET_CONST &&
-					current_aliases.count(instr.operands[0].reg_index()) != 0) {
-					IRInstruction move(IROpcode::MOVE,
-						IRValue::reg(fields.at(instr.operands[1].immediate())), instr.operands[2]);
-					move.line = instr.line;
-					fresh.push_back(std::move(move));
-					continue;
-				}
-				fresh.push_back(instr);
 			}
-			func.max_registers = std::max(func.max_registers, next_register);
-			replace_instructions(func, std::move(fresh));
-			changed = replaced_one = true;
-			break;
 		}
-		if (!replaced_one) {
+		if (!replaced) {
 			break;
 		}
 	}
@@ -2619,6 +2696,278 @@ bool IROptimizer::enhanced_copy_propagation(IRFunction& func) {
 	return replace_instructions(func, std::move(new_instructions));
 }
 
+
+// Fuse d[k] op= v (GET + operator + SET) into one DICT_OPERATE when both
+// intermediates are single-use and the window between is host-quiet.
+// Division and shifts excluded: guest-side rules differ from Variant::evaluate.
+bool IROptimizer::fuse_dictionary_updates(IRFunction& func) {
+	std::vector<IRInstruction>& code = func.instructions;
+	const int params = int(func.parameters.size());
+	int nregs = std::max(func.max_registers, params);
+	for (const IRInstruction& instr : code) {
+		for (const IRValue& operand : instr.operands) {
+			if (operand.type == IRValue::Type::REGISTER) {
+				nregs = std::max(nregs, operand.reg_index() + 1);
+			}
+		}
+	}
+	std::vector<int> def_count(size_t(nregs), 0);
+	std::vector<int> read_count(size_t(nregs), 0);
+	std::vector<int> reads;
+	for (int reg = 0; reg < params; reg++) {
+		def_count[size_t(reg)] = 1;
+	}
+	for (size_t i = 0; i < code.size(); i++) {
+		for (size_t operand = 0; operand < code[i].operands.size(); operand++) {
+			if (ir_writes_operand(code[i], operand)) {
+				const int reg = code[i].operands[operand].reg_index();
+				def_count[size_t(reg)]++;
+			}
+		}
+		reads.clear();
+		ir_collect_read_registers(code[i], reads);
+		for (int reg : reads) {
+			read_count[size_t(reg)]++;
+		}
+	}
+	const auto written_between = [&](int reg, size_t first, size_t last) {
+		for (size_t i = first; i <= last && i < code.size(); i++) {
+			for (size_t operand = 0; operand < code[i].operands.size(); operand++) {
+				if (ir_writes_operand(code[i], operand) && code[i].operands[operand].reg_index() == reg) {
+					return true;
+				}
+			}
+		}
+		return false;
+	};
+	const auto string_of = [&](const IRValue& index) -> const std::string* {
+		if (m_string_constants == nullptr || index.type != IRValue::Type::IMMEDIATE ||
+			index.immediate() < 0 || size_t(index.immediate()) >= m_string_constants->size())
+		{
+			return nullptr;
+		}
+		return &(*m_string_constants)[size_t(index.immediate())];
+	};
+	// Nothing between the read and write may reach the Dictionary.
+	const auto quiet = [](const IRInstruction& instr) {
+		const auto numeric = [](IRInstruction::TypeHint type) {
+			return type == Variant::INT || type == Variant::FLOAT;
+		};
+		switch (instr.opcode) {
+			case IROpcode::GLOBAL_CALL:
+			case IROpcode::CONSTRUCT:
+			case IROpcode::CONVERT:
+			case IROpcode::IN:
+				return false;
+			case IROpcode::MOD:
+				// String % Object calls the object's _to_string().
+				return numeric(instr.lhs_type_hint) && numeric(instr.rhs_type_hint);
+			default:
+				return !ir_is_control_flow(instr.opcode) && ir_instruction_is_pure(instr);
+		}
+	};
+
+	size_t moving_read = SIZE_MAX;
+	const auto local_def = [&](int reg, size_t at) -> int {
+		for (size_t i = at; i-- > 0;) {
+			for (size_t operand = 0; operand < code[i].operands.size(); operand++) {
+				if (ir_writes_operand(code[i], operand) && code[i].operands[operand].reg_index() == reg) {
+					return int(i);
+				}
+			}
+			if (ir_is_control_flow(code[i].opcode)) {
+				return -1;
+			}
+		}
+		return -1;
+	};
+	// Matches the read's key against the write's, which the parser may have
+	// cloned as a second computation of the same pure expression.
+	const std::function<bool(int, size_t, int, size_t, int)> same_value =
+		[&](int a, size_t at_a, int b, size_t at_b, int depth) -> bool {
+		if (a == b && !written_between(a, std::min(at_a, at_b), std::max(at_a, at_b) - 1)) {
+			return true;
+		}
+		const int def_a = local_def(a, at_a);
+		const int def_b = local_def(b, at_b);
+		if (def_a < 0 || def_b < 0) {
+			return false;
+		}
+		const IRInstruction& da = code[size_t(def_a)];
+		const IRInstruction& db = code[size_t(def_b)];
+		if (da.opcode != db.opcode || da.type_hint != db.type_hint ||
+			da.lhs_type_hint != db.lhs_type_hint || da.rhs_type_hint != db.rhs_type_hint ||
+			da.operands.size() != db.operands.size())
+		{
+			return false;
+		}
+		switch (da.opcode) {
+			case IROpcode::LOAD_IMM:
+				return da.operands[1].immediate() == db.operands[1].immediate();
+			case IROpcode::LOAD_STRING: {
+				const std::string* sa = string_of(da.operands[1]);
+				const std::string* sb = string_of(db.operands[1]);
+				return sa != nullptr && sb != nullptr && *sa == *sb;
+			}
+			case IROpcode::LOAD_GLOBAL: {
+				if (da.operands[1].immediate() != db.operands[1].immediate()) {
+					return false;
+				}
+				// Nothing between the two loads may store to the member.
+				const size_t first = size_t(std::min(def_a, def_b));
+				const size_t last = size_t(std::max(def_a, def_b));
+				for (size_t i = first + 1; i < last; i++) {
+					if (i != moving_read && !quiet(code[i])) {
+						return false;
+					}
+				}
+				return true;
+			}
+			default:
+				break;
+		}
+		if (depth == 0 || !ir_has_effect(da.opcode, IR_ARITHMETIC) || !quiet(da)) {
+			return false;
+		}
+		for (size_t operand = 1; operand < da.operands.size(); operand++) {
+			const IRValue& x = da.operands[operand];
+			const IRValue& y = db.operands[operand];
+			if (x.type != y.type) {
+				return false;
+			}
+			if (x.type == IRValue::Type::REGISTER) {
+				if (!same_value(x.reg_index(), size_t(def_a), y.reg_index(), size_t(def_b), depth - 1)) {
+					return false;
+				}
+			} else if (x.type != IRValue::Type::IMMEDIATE || x.immediate() != y.immediate()) {
+				return false;
+			}
+		}
+		return true;
+	};
+
+	// Fusions are collected and applied together. Each removes reads and defs
+	// only of its own single-use registers, so the counts above stay valid
+	// (or conservative) for every later candidate.
+	std::vector<bool> dropped(code.size(), false);
+	std::vector<std::pair<size_t, IRInstruction>> fusions;
+	for (size_t get_at = 0; get_at < code.size(); get_at++) {
+		const IRInstruction& get = code[get_at];
+		moving_read = get_at;
+		const bool get_const = get.opcode == IROpcode::DICT_GET_CONST && get.operands.size() == 3;
+		const bool get_keyed = get.opcode == IROpcode::CALL_SYSCALL && get.operands.size() == 5 &&
+			get.operands[1].immediate() == ECALL_DICTIONARY_OPS &&
+			get.operands[2].immediate() == dictionary_op(Dictionary_Op::GET);
+		if (!get_const && !get_keyed) {
+			continue;
+		}
+		const int old_value = get.operands[0].reg_index();
+		const int dict = get.operands[get_const ? 1 : 3].reg_index();
+		if (old_value < params || def_count[size_t(old_value)] != 1 ||
+			read_count[size_t(old_value)] != 1 || old_value == dict)
+		{
+			continue;
+		}
+
+		// Straight-line from the read to the write, touching nothing on the host.
+		size_t op_at = 0;
+		size_t set_at = 0;
+		for (size_t i = get_at + 1; i < code.size(); i++) {
+			const IRInstruction& instr = code[i];
+			if (op_at == 0) {
+				reads.clear();
+				ir_collect_read_registers(instr, reads);
+				if (std::find(reads.begin(), reads.end(), old_value) != reads.end()) {
+					op_at = i;
+					continue;
+				}
+			} else if ((instr.opcode == IROpcode::DICT_SET || instr.opcode == IROpcode::DICT_SET_CONST ||
+				instr.opcode == IROpcode::DICT_SET_CONST_STR) &&
+				instr.operands[2].type == IRValue::Type::REGISTER &&
+				instr.operands[2].reg_index() == code[op_at].operands[0].reg_index())
+			{
+				set_at = i;
+				break;
+			}
+			if (!quiet(instr)) {
+				break;
+			}
+		}
+		if (op_at == 0 || set_at == 0) {
+			continue;
+		}
+
+		const IRInstruction& op = code[op_at];
+		const int variant_op = ir_dictionary_operate_operator(op.opcode);
+		if (variant_op < 0 || op.operands.size() != 3 ||
+			op.operands[1].type != IRValue::Type::REGISTER || op.operands[1].reg_index() != old_value ||
+			op.operands[2].type != IRValue::Type::REGISTER)
+		{
+			continue;
+		}
+		const int answer = op.operands[0].reg_index();
+		const int operand = op.operands[2].reg_index();
+		if (answer < params || def_count[size_t(answer)] != 1 || read_count[size_t(answer)] != 1 ||
+			operand == old_value || operand == answer || written_between(operand, op_at + 1, set_at))
+		{
+			continue;
+		}
+
+		const IRInstruction& set = code[set_at];
+		if (set.operands[0].type != IRValue::Type::REGISTER ||
+			!same_value(dict, get_at, set.operands[0].reg_index(), set_at, 1))
+		{
+			continue;
+		}
+		const bool keyed_write = set.opcode == IROpcode::DICT_SET;
+		if (keyed_write) {
+			if (!get_keyed || set.operands[1].type != IRValue::Type::REGISTER ||
+				!same_value(get.operands[4].reg_index(), get_at, set.operands[1].reg_index(),
+					set_at, 3))
+			{
+				continue;
+			}
+		} else {
+			const std::string* read_key = get_const ? string_of(get.operands[2]) : nullptr;
+			const std::string* write_key = string_of(set.operands[1]);
+			if (read_key == nullptr || write_key == nullptr || *read_key != *write_key) {
+				continue;
+			}
+		}
+		IRInstruction fused(keyed_write ? IROpcode::DICT_OPERATE : IROpcode::DICT_OPERATE_CONST);
+		fused.operands.push_back(set.operands[0]);
+		fused.operands.push_back(set.operands[1]);
+		fused.operands.push_back(IRValue::reg(operand));
+		fused.operands.push_back(IRValue::imm(variant_op));
+		if (!keyed_write) {
+			fused.operands.push_back(IRValue::imm(set.opcode == IROpcode::DICT_SET_CONST_STR ? 1 : 0));
+		}
+		fused.line = set.line;
+
+		dropped[get_at] = true;
+		dropped[op_at] = true;
+		fusions.emplace_back(set_at, std::move(fused));
+		// The window is consumed; anything inside it waits for the next run.
+		get_at = set_at;
+	}
+	if (fusions.empty()) {
+		return false;
+	}
+	std::vector<IRInstruction> fresh;
+	fresh.reserve(code.size() - 2 * fusions.size());
+	size_t next_fusion = 0;
+	for (size_t i = 0; i < code.size(); i++) {
+		if (dropped[i]) {
+			continue;
+		}
+		if (next_fusion < fusions.size() && fusions[next_fusion].first == i) {
+			fresh.push_back(std::move(fusions[next_fusion++].second));
+		} else {
+			fresh.push_back(std::move(code[i]));
+		}
+	}
+	return replace_instructions(func, std::move(fresh));
+}
 
 // Lazy strings: a str() whose result never escapes is described by its
 // pieces. length() is answered from those pieces in the guest (literal

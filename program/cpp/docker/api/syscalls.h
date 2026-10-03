@@ -286,6 +286,12 @@ enum class Dictionary_Op {
 	GET_INT_KEY,
 	SET_INT_KEY,
 	HAS_INT_KEY,
+	// d[key] op= value in place. a4 = operand, a5 = Variant::Operator.
+	// Key encoding matches SET/SET_INT_KEY/SET_RAW/SET_RAW_STR.
+	OPERATE,
+	OPERATE_INT_KEY,
+	OPERATE_RAW,
+	OPERATE_RAW_STR,
 };
 
 enum class String_Op {

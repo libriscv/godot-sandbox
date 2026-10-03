@@ -572,14 +572,19 @@ void IRInterpreter::execute_instruction(const IRFunction& func, const IRInstruct
 		case IROpcode::DICT_SET_CONST:
 		case IROpcode::DICT_SET_CONST_STR:
 		case IROpcode::DICT_HAS_CONST:
+		case IROpcode::DICT_OPERATE:
+		case IROpcode::DICT_OPERATE_CONST:
 		case IROpcode::STRUCT_CHECK:
 		case IROpcode::CALL_SYSCALL:
 			// String.length(): count UTF-8 code points.
-			if (instr.operands.size() == 3 && instr.operands[1].type == IRValue::Type::IMMEDIATE &&
+			if (instr.opcode == IROpcode::CALL_SYSCALL && instr.operands.size() == 3 &&
+				instr.operands[1].type == IRValue::Type::IMMEDIATE &&
 				instr.operands[1].immediate() == ECALL_STRING_SIZE &&
 				std::holds_alternative<std::string>(get_register(ctx, instr.operands[2].reg_index())))
 			{
-				const std::string& text = std::get<std::string>(get_register(ctx, instr.operands[2].reg_index()));
+				// get_register() returns by value; binding a reference into it dangles.
+				const Value subject = get_register(ctx, instr.operands[2].reg_index());
+				const std::string& text = std::get<std::string>(subject);
 				ctx.registers[instr.operands[0].reg_index()] = static_cast<int64_t>(std::count_if(
 					text.begin(), text.end(), [](char c) { return (static_cast<unsigned char>(c) & 0xC0) != 0x80; }));
 				break;

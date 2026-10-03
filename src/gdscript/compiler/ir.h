@@ -125,6 +125,37 @@ inline bool ir_is_control_flow(IROpcode op) {
 }
 
 // Decimal digit count of str(value). Unsigned magnitude handles INT64_MIN.
+// The Variant::Operator an arithmetic opcode evaluates as on the host, or -1.
+constexpr int ir_variant_operator(IROpcode op) {
+	switch (op) {
+		case IROpcode::ADD: return 6;      // OP_ADD
+		case IROpcode::SUB: return 7;      // OP_SUBTRACT
+		case IROpcode::MUL: return 8;      // OP_MULTIPLY
+		case IROpcode::DIV: return 9;      // OP_DIVIDE
+		case IROpcode::MOD: return 12;     // OP_MODULE
+		case IROpcode::POW: return 13;     // OP_POWER
+		case IROpcode::SHL: return 14;     // OP_SHIFT_LEFT
+		case IROpcode::SHR: return 15;     // OP_SHIFT_RIGHT
+		case IROpcode::BIT_AND: return 16; // OP_BIT_AND
+		case IROpcode::BIT_OR: return 17;  // OP_BIT_OR
+		case IROpcode::BIT_XOR: return 18; // OP_BIT_XOR
+		case IROpcode::IN: return 24;      // OP_IN
+		default: return -1;
+	}
+}
+
+// The operators DICT_OPERATE fuses, or -1. Division and shifts keep guest-side
+// rules that Variant::evaluate does not share. The host accepts only these.
+constexpr int ir_dictionary_operate_operator(IROpcode op) {
+	switch (op) {
+		case IROpcode::ADD: case IROpcode::SUB: case IROpcode::MUL:
+		case IROpcode::BIT_AND: case IROpcode::BIT_OR: case IROpcode::BIT_XOR:
+			return ir_variant_operator(op);
+		default:
+			return -1;
+	}
+}
+
 inline int64_t ir_decimal_length(int64_t value) {
 	uint64_t magnitude = value < 0 ? 0u - static_cast<uint64_t>(value) : static_cast<uint64_t>(value);
 	int64_t length = value < 0 ? 2 : 1;

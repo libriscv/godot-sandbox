@@ -270,6 +270,305 @@ static void test_a_declared_scalar_converts_an_unknown_value() {
 	std::cout << "  \u2713 an unknown value converts into a declared slot" << std::endl;
 }
 
+// -= Scalar replacement =-
+
+// Anything that reaches the host Dictionary: its construction or an access.
+static int count_dictionary_traffic(const IRFunction& func) {
+	int count = 0;
+	for (const auto& instr : func.instructions) {
+		switch (instr.opcode) {
+			case IROpcode::MAKE_DICTIONARY:
+			case IROpcode::MAKE_DICTIONARY_KEYED:
+			case IROpcode::DICT_SET:
+			case IROpcode::DICT_GET_CONST:
+			case IROpcode::DICT_SET_CONST:
+			case IROpcode::DICT_SET_CONST_STR:
+			case IROpcode::DICT_HAS_CONST:
+				count++;
+				break;
+			case IROpcode::CALL_SYSCALL:
+				count += instr.operands.size() >= 2 &&
+					instr.operands[1].immediate() == ECALL_DICTIONARY_OPS;
+				break;
+			default:
+				break;
+		}
+	}
+	return count;
+}
+
+static void test_a_local_dictionary_with_constant_keys_lives_in_registers() {
+	std::cout << "Testing scalar replacement of a constant-keyed Dictionary..." << std::endl;
+
+	const IRProgram ir = compile_to_ir(
+		"func counters(n : int) -> int:\n"
+		"\tvar d : Dictionary = {\"hp\": 0, \"mp\": 0}\n"
+		"\tvar i : int = 0\n"
+		"\twhile i < n:\n"
+		"\t\td[\"hp\"] += 1\n"
+		"\t\td.mp -= 1\n"
+		"\t\ti += 1\n"
+		"\treturn d[\"hp\"] + d[\"mp\"]\n"
+		"\n"
+		"func grown(x : int):\n"
+		"\tvar d = {}\n"
+		"\tvar before = d.size()\n"
+		"\td[\"a\"] = x\n"
+		"\td.b = 2\n"
+		"\treturn [before, d.size(), d.has(\"a\"), \"c\" in d, d.get(\"c\", 7), d[\"a\"] + d.b]\n"
+		"\n"
+		"func integer_keys(k : int) -> int:\n"
+		"\tvar d = {1: 10, 2: 20}\n"
+		"\tfor i in k:\n"
+		"\t\tif i & 1:\n"
+		"\t\t\td[1] += i\n"
+		"\tvar e = d\n"
+		"\treturn e[1] + d.get(2, 0)\n"
+		"\n"
+		"func fresh_each_pass(n : int) -> int:\n"
+		"\tvar acc := 0\n"
+		"\tfor i in n:\n"
+		"\t\tvar d = {\"v\": i}\n"
+		"\t\td.v *= 2\n"
+		"\t\tacc += d.v\n"
+		"\treturn acc\n"
+		"\n"
+		"func no_parameters():\n"
+		"\tvar d = {}\n"
+		"\td[\"a\"] = 1\n"
+		"\treturn d.size()\n", true);
+
+	for (const char* name : { "counters", "grown", "integer_keys", "fresh_each_pass", "no_parameters" }) {
+		assert(count_dictionary_traffic(find_function(ir, name)) == 0);
+	}
+	// has(), `in` and size() are answered while compiling.
+	assert(count_opcode(find_function(ir, "grown"), IROpcode::LOAD_BOOL) == 2);
+
+	std::cout << "  \u2713 a constant-keyed Dictionary lives in registers" << std::endl;
+}
+
+static void test_an_escaping_dictionary_stays_materialized() {
+	std::cout << "Testing that a Dictionary that escapes is still built..." << std::endl;
+
+	const IRProgram ir = compile_to_ir(
+		"func returned(x : int) -> Dictionary:\n"
+		"\tvar d = {\"a\": x}\n"
+		"\treturn d\n"
+		"\n"
+		"func passed(x : int):\n"
+		"\tvar d = {\"a\": x}\n"
+		"\treturn str(d)\n"
+		"\n"
+		"func stored(x : int):\n"
+		"\tvar d = {\"a\": x}\n"
+		"\treturn [d]\n"
+		"\n"
+		"func erased(x : int):\n"
+		"\tvar d = {\"a\": x, \"b\": 1}\n"
+		"\td.erase(\"a\")\n"
+		"\treturn d.size()\n"
+		"\n"
+		"func computed_key(x : int, k):\n"
+		"\tvar d = {\"a\": x}\n"
+		"\treturn d[k]\n"
+		"\n"
+		"func absent_key(x : int):\n"
+		"\tvar d = {\"a\": x}\n"
+		"\treturn d[\"b\"]\n"
+		"\n"
+		"func added_on_one_path(c : bool):\n"
+		"\tvar d = {\"a\": 1}\n"
+		"\tif c:\n"
+		"\t\td[\"b\"] = 2\n"
+		"\treturn d.size()\n"
+		"\n"
+		"func bool_key():\n"
+		"\tvar d = {1: \"int\", true: \"bool\"}\n"
+		"\treturn d[1]\n"
+		"\n"
+		"func float_key():\n"
+		"\tvar d = {1.0: \"float\"}\n"
+		"\treturn d.has(1)\n"
+		"\n"
+		"func reassigned(c : bool) -> int:\n"
+		"\tvar d = {\"a\": 1}\n"
+		"\tif c:\n"
+		"\t\td = {\"a\": 2}\n"
+		"\treturn d[\"a\"]\n", true);
+
+	for (const char* name : { "returned", "passed", "stored", "erased", "computed_key", "absent_key",
+			"added_on_one_path", "bool_key", "float_key", "reassigned" }) {
+		const IRFunction& func = find_function(ir, name);
+		assert(count_opcode(func, IROpcode::MAKE_DICTIONARY) >= 1);
+	}
+
+	std::cout << "  \u2713 an escaping Dictionary is still built" << std::endl;
+}
+
+// -= Fused updates =-
+
+static int count_fused(const IRFunction& func) {
+	return count_opcode(func, IROpcode::DICT_OPERATE) +
+		count_opcode(func, IROpcode::DICT_OPERATE_CONST);
+}
+
+static void test_a_compound_update_is_one_host_call() {
+	std::cout << "Testing that d[k] op= v becomes one host call..." << std::endl;
+
+	const IRProgram ir = compile_to_ir(
+		"var stats : Dictionary = {}\n"
+		"\n"
+		"func parameter(d : Dictionary, k, v):\n"
+		"\td[k] += v\n"
+		"\td[k] -= 1\n"
+		"\td[k] *= 2\n"
+		"\td[k] |= 1\n"
+		"\treturn d\n"
+		"\n"
+		"func member():\n"
+		"\tstats[\"hp\"] += 1\n"
+		"\tstats.mp -= 2\n"
+		"\n"
+		"func computed(d : Dictionary, i : int):\n"
+		"\td[i & 15] += 1\n"
+		"\td[-(i & 3) + 7] ^= 2\n"
+		"\treturn d\n", true);
+
+	const IRFunction& parameter = find_function(ir, "parameter");
+	assert(count_opcode(parameter, IROpcode::DICT_OPERATE) == 4);
+	assert(count_dict_ops(parameter, Dictionary_Op::GET) == 0);
+	assert(count_opcode(parameter, IROpcode::DICT_SET) == 0);
+
+	const IRFunction& member = find_function(ir, "member");
+	assert(count_opcode(member, IROpcode::DICT_OPERATE_CONST) == 2);
+	assert(count_opcode(member, IROpcode::DICT_GET_CONST) == 0);
+	// `stats["hp"]` writes a String key, `stats.mp` a StringName, as before.
+	int string_keys = 0;
+	for (const auto& instr : member.instructions) {
+		if (instr.opcode == IROpcode::DICT_OPERATE_CONST) {
+			string_keys += int(instr.operands[4].immediate());
+		}
+	}
+	assert(string_keys == 1);
+
+	assert(count_opcode(find_function(ir, "computed"), IROpcode::DICT_OPERATE) == 2);
+
+	std::cout << "  \u2713 a compound update is one host call" << std::endl;
+}
+
+static void test_an_update_that_cannot_move_stays_apart() {
+	std::cout << "Testing that an update which cannot move is left alone..." << std::endl;
+
+	const IRProgram ir = compile_to_ir(
+		"func f() -> int:\n"
+		"\treturn 1\n"
+		"\n"
+		"func divided(d : Dictionary, k):\n"
+		"\td[k] /= 2\n"
+		"\td[k] %= 2\n"
+		"\td[k] <<= 1\n"
+		"\treturn d\n"
+		"\n"
+		"func a_call_between(d : Dictionary, k):\n"
+		"\td[k] += f()\n"
+		"\treturn d\n"
+		"\n"
+		"func str_between(d : Dictionary, k, o):\n"
+		"\td[k] += str(o)\n"
+		"\treturn d\n"
+		"\n"
+		"func another_key(d : Dictionary, a, b):\n"
+		"\td[a] = d[b] + 1\n"
+		"\treturn d\n"
+		"\n"
+		"func operand_first(d : Dictionary, k):\n"
+		"\td[k] = 1 + d[k]\n"
+		"\treturn d\n"
+		"\n"
+		"func value_kept(d : Dictionary, k):\n"
+		"\tvar old = d[k]\n"
+		"\td[k] = old + 1\n"
+		"\treturn old\n"
+		"\n"
+		"func formatted_between(d : Dictionary, o):\n"
+		"\td[\"log\"] += \"%s\" % o\n"
+		"\treturn d\n", true);
+
+	// String % Object runs the object's _to_string(), which may touch d.
+	for (const char* name : { "divided", "a_call_between", "str_between", "another_key",
+			"operand_first", "value_kept", "formatted_between" }) {
+		assert(count_fused(find_function(ir, name)) == 0);
+	}
+
+	std::cout << "  \u2713 an update that cannot move is left alone" << std::endl;
+}
+
+static void test_a_compound_key_is_evaluated_once() {
+	std::cout << "Testing that a compound assignment evaluates its key once..." << std::endl;
+
+	// bump() moves counter, so a second evaluation of the key would write d[2].
+	const IRProgram ir = compile_to_ir(
+		"var counter = 0\n"
+		"func bump():\n"
+		"\tcounter += 1\n"
+		"\treturn 1\n"
+		"\n"
+		"func untyped(d):\n"
+		"\td[counter + 1] += bump()\n"
+		"\treturn d\n"
+		"\n"
+		"func typed(d : Dictionary):\n"
+		"\td[-counter] += bump()\n"
+		"\treturn d\n"
+		"\n"
+		"func nested(a, i : int, j : int):\n"
+		"\ta[i + 1][j * 2] += bump()\n"
+		"\treturn a\n", true);
+
+	for (const char* name : { "untyped", "typed" }) {
+		assert(count_opcode(find_function(ir, name), IROpcode::LOAD_GLOBAL) == 1);
+	}
+	const IRFunction& nested = find_function(ir, "nested");
+	assert(count_opcode(nested, IROpcode::MUL) == 1);
+	assert(count_opcode(nested, IROpcode::ADD) == 2); // i + 1, then the update itself
+
+	// Only a subscript may be an expression; `(a + b)` is no target.
+	bool refused = false;
+	try {
+		compile_to_ir("func f(a, b):\n\t(a + b) += 1\n", true);
+	} catch (const CompilerException& e) {
+		refused = std::string(e.what()).find("Invalid target for compound assignment") != std::string::npos;
+	}
+	assert(refused);
+
+	std::cout << "  \u2713 a compound assignment evaluates its key once" << std::endl;
+}
+
+static void test_a_fused_update_picks_its_key_form() {
+	std::cout << "Testing the key form of a fused update..." << std::endl;
+
+	const std::vector<uint8_t> int_key = compile_to_machine_code(
+		"func f(d : Dictionary, n : int):\n"
+		"\tfor i in n:\n"
+		"\t\td[i & 7] += 1\n");
+	assert(emits_dict_op(int_key, Dictionary_Op::OPERATE_INT_KEY));
+	assert(!emits_dict_op(int_key, Dictionary_Op::GET_INT_KEY));
+
+	const std::vector<uint8_t> boxed_key = compile_to_machine_code(
+		"func f(d : Dictionary, k):\n"
+		"\td[k] += 1\n");
+	assert(emits_dict_op(boxed_key, Dictionary_Op::OPERATE));
+
+	const std::vector<uint8_t> raw_key = compile_to_machine_code(
+		"func f(d : Dictionary):\n"
+		"\td[\"hp\"] += 1\n"
+		"\td.mp += 1\n");
+	assert(emits_dict_op(raw_key, Dictionary_Op::OPERATE_RAW_STR));
+	assert(emits_dict_op(raw_key, Dictionary_Op::OPERATE_RAW));
+
+	std::cout << "  \u2713 a fused update picks its key form" << std::endl;
+}
+
 int main() {
 	std::cout << "=== Dictionary Access Tests ===" << std::endl << std::endl;
 
@@ -279,6 +578,12 @@ int main() {
 		test_get_with_a_default_has_its_own_op();
 		test_a_numeric_read_loop_releases_nothing();
 		test_a_declared_scalar_converts_an_unknown_value();
+		test_a_local_dictionary_with_constant_keys_lives_in_registers();
+		test_an_escaping_dictionary_stays_materialized();
+		test_a_compound_update_is_one_host_call();
+		test_an_update_that_cannot_move_stays_apart();
+		test_a_fused_update_picks_its_key_form();
+		test_a_compound_key_is_evaluated_once();
 	} catch (const CompilerException& e) {
 		std::cerr << "Unexpected compiler error: " << e.what() << std::endl;
 		return 1;

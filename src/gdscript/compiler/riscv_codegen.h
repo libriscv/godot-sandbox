@@ -185,6 +185,7 @@ private:
 	void gen_syscall_array_batch(const IRInstruction& instr, int result_vreg);
 	void gen_syscall_dictionary_ops(const IRInstruction& instr, int result_vreg);
 	void gen_dict_const(const IRInstruction& instr);
+	void gen_dict_operate(const IRInstruction& instr);
 	void gen_struct_check(const IRInstruction& instr);
 	void gen_make_dictionary_keyed(const IRInstruction& instr);
 	void gen_get_node(const IRInstruction& instr);

@@ -326,6 +326,11 @@ IR_OPCODE(DICT_SET_CONST,  "DICT_SET_CONST",  SIG(SRC, IMM, SRC), IR_SIDE_EFFECT
 IR_OPCODE(DICT_SET_CONST_STR, "DICT_SET_CONST_STR", SIG(SRC, IMM, SRC), IR_SIDE_EFFECTS)
 IR_OPCODE(DICT_HAS_CONST,  "DICT_HAS_CONST",  SIG(DST, SRC, IMM), IR_SIDE_EFFECTS)
 
+// Fused d[k] op= v. IMM is the Variant::Operator. Nothing is defined.
+// CONST form: string-constant key index, last IMM = 1 for String / 0 for StringName.
+IR_OPCODE(DICT_OPERATE,       "DICT_OPERATE",       SIG(SRC, SRC, SRC, IMM),      IR_SIDE_EFFECTS)
+IR_OPCODE(DICT_OPERATE_CONST, "DICT_OPERATE_CONST", SIG(SRC, IMM, SRC, IMM, IMM), IR_SIDE_EFFECTS)
+
 // Exact struct shape test.  The trailing immediates are string-constant
 // indices; the backend materializes one table of UTF-8 views for the syscall.
 IR_OPCODE(STRUCT_CHECK,    "STRUCT_CHECK",    SIG(DST, SRC, CNT, ARG_LIST), IR_SIDE_EFFECTS)

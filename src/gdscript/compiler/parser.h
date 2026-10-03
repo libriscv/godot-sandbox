@@ -114,7 +114,7 @@ private:
 	// Reads position before move; factored to avoid repeating at each call site.
 	static ExprPtr make_binary(ExprPtr left, BinaryExpr::Op op, ExprPtr right);
 	// Null when the target cannot be read twice without side effects.
-	static ExprPtr clone_lvalue(const Expr* expr);
+	static ExprPtr clone_lvalue(const Expr* expr, bool in_subscript = false);
 
 	bool match(TokenType type);
 	bool match_one_of(std::initializer_list<TokenType> types);

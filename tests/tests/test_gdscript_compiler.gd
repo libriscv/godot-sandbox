@@ -7548,6 +7548,285 @@ func histogram(words : Array) -> Dictionary:
 
 	s.queue_free()
 
+func test_sgd_a_dictionary_with_constant_keys_matches_the_engine():
+	# Scalar-replaced or materialized, every shape must match GDScript.
+	var gdscript_code = """
+func counters(n : int) -> int:
+	var d : Dictionary = {"hp": 0, "mp": 0}
+	var i : int = 0
+	while i < n:
+		d["hp"] += 1
+		d["mp"] -= 2
+		i += 1
+	return d["hp"] * 1000 + d["mp"]
+
+func keys_added_up_front(x : int):
+	var d = {}
+	d["a"] = x
+	d.b = x * 2
+	var answer = [d.size(), d.has("a"), "b" in d, "c" in d, d.has("zz")]
+	answer.append(d.get("a", -1))
+	answer.append(d.get("c", -1))
+	answer.append(d["a"] + d.b)
+	return answer
+
+func size_seen_while_growing():
+	var d = {}
+	var before = d.size()
+	var had = d.has("a")
+	d["a"] = 1
+	return [before, had, d.size(), d.has("a")]
+
+func integer_keys(k : int):
+	var d = {1: 10, 2: 20, "two": 2}
+	d[1] += k
+	return [d[1], d[2], d["two"], d.has(1), d.has(3), 2 in d, d.get(3, "none"), d.size()]
+
+func written_on_one_branch(n : int) -> int:
+	var d = {"even": 0, "odd": 0}
+	for i in n:
+		if i % 2 == 0:
+			d["even"] += i
+		else:
+			d.odd += 1
+	return d["even"] * 100 + d["odd"]
+
+func fresh_each_pass(n : int) -> Array:
+	var out = []
+	for i in n:
+		var d = {"v": i, "seen": false}
+		if i > 1:
+			d["seen"] = true
+			d["v"] *= 10
+		out.append([d["v"], d["seen"]])
+	return out
+
+func through_an_alias(x : int) -> int:
+	var d = {"a": x}
+	var e = d
+	e["a"] += 5
+	return d["a"]
+
+func strings_across_passes(n : int) -> String:
+	var d = {"name": "", "count": 0}
+	for i in n:
+		d["name"] = d["name"] + str(i) + ","
+		d["count"] += 1
+	return d["name"] + str(d["count"])
+
+func holds_a_shared_container(n : int):
+	var inner = {"a": 1}
+	var items = []
+	var outer = {"in": inner, "list": items}
+	for i in n:
+		outer["in"]["a"] += i
+		outer["list"].append(i)
+	return [inner, items]
+
+func vector_component(x : float) -> Vector2:
+	var d = {"v": Vector2(1, 2)}
+	d["v"].x += x
+	d["v"] = d["v"] * 2.0
+	return d["v"]
+
+func struct_mutated_in_a_loop(n : int) -> int:
+	var d = {"x": 0, "y": 0}
+	var i := 0
+	while i < n:
+		d.x += i
+		if d.x > 10:
+			d.y += 1
+		i += 1
+	return d.x * 100 + d.y
+
+func escapes_by_return(x : int) -> Dictionary:
+	var d = {"a": x}
+	d["a"] += 1
+	return d
+
+func escapes_by_call(x : int) -> int:
+	var d = {"a": x, "b": 2}
+	d["a"] += 1
+	return d.values().size() + d["a"]
+
+func erased(x : int):
+	var d = {"a": x, "b": 2}
+	d.erase("a")
+	return [d.has("a"), d.size(), d["b"]]
+
+func key_added_after_a_branch(c : bool):
+	var d = {"a": 1}
+	if c:
+		d["b"] = 2
+	return [d.size(), d.has("b")]
+
+func bool_and_int_keys():
+	var d = {1: "int", true: "bool"}
+	return [d[1], d[true], d.size()]
+
+func float_key_is_not_an_int_key():
+	var d = {1.0: "float"}
+	return [d.has(1), d.has(1.0), d.size()]
+
+var _member : Dictionary = {}
+
+func member_updates(n : int) -> Dictionary:
+	_member = {"hp": 0, "mp": 10}
+	for i in n:
+		_member["hp"] += i
+		_member.mp -= 1
+		_member["hp"] *= 1
+	return _member
+
+func computed_key_updates(n : int) -> Dictionary:
+	var counts : Dictionary = {}
+	for i in 8:
+		counts[i] = 0
+	for i in n:
+		counts[i & 7] += 1
+		counts[(i * 3) & 7] |= 16
+		counts[i % 8] ^= 1
+		counts[-(i & 3) + 7] &= 255
+	return counts
+
+func parameter_updates(d : Dictionary, key, amount):
+	d[key] += amount
+	d[key] -= 1
+	d[key] *= 2
+	return d
+
+func mixed_value_updates(x : float) -> Dictionary:
+	var d : Dictionary = {"f": 1.5, "v": Vector2(1, 2), "i": 3, "s": "a"}
+	d["f"] += x
+	d["v"] *= x
+	d["i"] += x
+	d["v"] += Vector2(x, x)
+	d["s"] += "b"
+	d["s"] += str(x)
+	return d
+"""
+	var s = _compile_and_load(gdscript_code, 4000000)
+	if s == null:
+		return
+
+	var script := GDScript.new()
+	script.source_code = gdscript_code
+	assert_eq(script.reload(), OK, "the same source should compile as GDScript")
+	var engine = script.new()
+
+	var cases := [
+		["counters", [0]],
+		["counters", [37]],
+		["keys_added_up_front", [4]],
+		["size_seen_while_growing", []],
+		["integer_keys", [5]],
+		["written_on_one_branch", [9]],
+		["fresh_each_pass", [4]],
+		["through_an_alias", [3]],
+		["strings_across_passes", [150]],
+		["holds_a_shared_container", [4]],
+		["vector_component", [0.5]],
+		["struct_mutated_in_a_loop", [8]],
+		["escapes_by_return", [1]],
+		["escapes_by_call", [1]],
+		["erased", [1]],
+		["key_added_after_a_branch", [true]],
+		["key_added_after_a_branch", [false]],
+		["bool_and_int_keys", []],
+		["float_key_is_not_an_int_key", []],
+		["member_updates", [6]],
+		["computed_key_updates", [21]],
+		["parameter_updates", [{"a": 1}, "a", 5]],
+		["parameter_updates", [{1: 2.5}, 1, 0.5]],
+		["parameter_updates", [{&"n": 4}, "n", 3]],
+		["mixed_value_updates", [0.25]],
+	]
+	for case in cases:
+		var name : String = case[0]
+		var args : Array = case[1]
+		var expected = engine.callv(name, args)
+		var actual = _call_with(s, name, args)
+		assert_eq(actual, expected, "%s%s should answer what GDScript answers" % [name, args])
+		assert_eq(typeof(actual), typeof(expected), "%s%s should answer the same type" % [name, args])
+
+	s.queue_free()
+
+func test_sgd_a_compound_update_evaluates_its_key_once():
+	# GDScript computes the key before the right-hand side runs. bump() moves
+	# the key's input, so a second evaluation would write a different entry.
+	var gdscript_code = """
+var counter = 0
+
+func bump():
+	counter += 1
+	return 10
+
+func update(d):
+	counter = 0
+	d[counter + 1] += bump()
+	return d
+
+func update_typed(d : Dictionary):
+	counter = 0
+	d[counter + 1] += bump()
+	return d
+"""
+	var s = _compile_and_load(gdscript_code, 400000)
+	if s == null:
+		return
+	assert_eq(s.vmcallv("update", {1: 1, 2: 2}), {1: 11, 2: 2}, "the entry read is the entry written")
+	assert_eq(s.vmcallv("update_typed", {1: 1, 2: 2}), {1: 11, 2: 2}, "fused or not")
+
+
+func test_sgd_a_fused_dictionary_update_fails_as_its_parts_did():
+	# The fused update must fail the same way the unfused GET+op+SET did.
+	var gdscript_code = """
+func bump(d : Dictionary, k):
+	d[k] += 1
+	return d
+
+func bump_by(d : Dictionary, k, v):
+	d[k] += v
+	return d
+"""
+	var s = _compile_and_load(gdscript_code, 400000)
+	if s == null:
+		return
+
+	var absent : Dictionary = {"a": 1}
+	var before := s.get_exceptions()
+	s.vmcallv("bump", absent, "missing")
+	assert_eq(s.get_exceptions(), before + 1, "an absent key reads as null, which + refuses")
+	assert_engine_error("Invalid operands 'Nil' and 'int' in operator '+'")
+	assert_eq(absent, {"a": 1}, "and the refused update leaves no key behind")
+
+	var frozen : Dictionary = {"a": 1}
+	frozen.make_read_only()
+	before = s.get_exceptions()
+	s.vmcallv("bump", frozen, "a")
+	assert_eq(s.get_exceptions(), before + 1, "a read-only Dictionary refuses the write")
+	assert_engine_error("_p->read_only")
+	assert_engine_error("the container is read-only")
+	assert_eq(frozen["a"], 1, "and keeps its value")
+
+	var typed : Dictionary[String, int] = {"a": 1}
+	assert_eq(s.vmcallv("bump", typed, "a"), {"a": 2}, "a typed Dictionary updates")
+	assert_eq(typed["a"], 2, "through its handle")
+	before = s.get_exceptions()
+	s.vmcallv("bump", typed, "missing")
+	assert_eq(s.get_exceptions(), before + 1, "an absent key in a typed Dictionary is refused too")
+	assert_engine_error("Invalid operands 'Nil' and 'int' in operator '+'")
+	assert_false(typed.has("missing"), "without a default value appearing")
+
+	var mixed : Dictionary = {"i": 2, "f": 0.5, "s": "x"}
+	s.vmcallv("bump_by", mixed, "i", 0.25)
+	s.vmcallv("bump_by", mixed, "f", 2)
+	s.vmcallv("bump_by", mixed, "s", "y")
+	assert_eq(mixed, {"i": 2.25, "f": 2.5, "s": "xy"}, "an update may change the entry's type")
+	assert_eq(typeof(mixed["i"]), TYPE_FLOAT, "int + float is a float")
+
+	s.queue_free()
+
 func test_untyped_arithmetic_matches_the_engine():
 	# Everything a container hands back is a Variant of unknown type, so untyped
 	# arithmetic tests for two integers at run time and falls back to Godot's

@@ -109,6 +109,7 @@ func dict_get(n : int) -> int:
 		j += 1
 	return acc
 
+# Scalar-replaced: no host Dictionary built.
 func dict_string_keys(n : int) -> int:
 	var d : Dictionary = {"hp": 0, "mp": 0}
 	var i : int = 0
@@ -117,6 +118,30 @@ func dict_string_keys(n : int) -> int:
 		d["mp"] -= 1
 		i += 1
 	return d["hp"] + d["mp"]
+
+# Member Dictionary: every access reaches the host.
+var _stats : Dictionary = {}
+
+func dict_member_keys(n : int) -> int:
+	_stats = {"hp": 0, "mp": 0}
+	var i : int = 0
+	while i < n:
+		_stats["hp"] += 1
+		_stats["mp"] -= 1
+		i += 1
+	return _stats["hp"] + _stats["mp"]
+
+func dict_counters(n : int) -> int:
+	var counts : Dictionary = {}
+	var i : int = 0
+	while i < 16:
+		counts[i] = 0
+		i += 1
+	i = 0
+	while i < n:
+		counts[i & 15] += 1
+		i += 1
+	return counts[3] + counts.size()
 
 func dict_get_default(n : int) -> int:
 	var d : Dictionary = {}
@@ -277,6 +302,8 @@ const KERNELS := [
 	{"group": "dictionary get", "fn": "dict_get", "n": 20000, "unit": "op", "cpp": "bench_dict_get"},
 	{"group": "dictionary string keys", "fn": "dict_string_keys", "n": 20000, "unit": "iteration", "cpp": "bench_dict_string_keys"},
 	{"group": "dictionary get default", "fn": "dict_get_default", "n": 20000, "unit": "op", "cpp": "bench_dict_get_default"},
+	{"group": "dictionary member keys", "fn": "dict_member_keys", "n": 20000, "unit": "iteration"},
+	{"group": "dictionary counters", "fn": "dict_counters", "n": 20000, "unit": "increment"},
 	{"group": "string build", "fn": "string_ops", "n": 2000, "unit": "string"},
 	{"group": "string iterate", "fn": "string_iterate", "n": 8000, "unit": "character"},
 	{"group": "untyped float math", "fn": "untyped_float", "n": 100000, "unit": "operation"},

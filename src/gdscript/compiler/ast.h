@@ -289,6 +289,9 @@ struct AssignStmt : Stmt {
 	std::string name;
 	ExprPtr target;
 	ExprPtr value;
+	// `a[k] op= v`: the cloned read of the target inside `value`. Its subscripts
+	// share the target's evaluation, so the key is computed once, as in GDScript.
+	const Expr* compound_read = nullptr;
 
 	AssignStmt(std::string n, ExprPtr v)
 		: name(std::move(n)), target(nullptr), value(std::move(v)) {}

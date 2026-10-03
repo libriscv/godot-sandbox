@@ -1272,6 +1272,16 @@ void CodeGenerator::gen_var_decl(const VarDeclStmt* stmt, FunctionContext& func,
 }
 
 void CodeGenerator::gen_assign(const AssignStmt* stmt, FunctionContext& func) {
+	if (stmt->target && stmt->compound_read) {
+		// `d[k] op= v` reads and writes d[k] with one evaluation of k, ahead of v,
+		// which may change what k would compute to.
+		pin_compound_subscripts(stmt->target.get(), stmt->compound_read, func);
+		int value_reg = gen_expr(stmt->value.get(), func);
+		gen_store_to(stmt->target.get(), value_reg, func, stmt);
+		func.pinned_exprs.clear();
+		return;
+	}
+
 	int value_reg = gen_expr(stmt->value.get(), func);
 
 	if (stmt->target) {
@@ -1280,6 +1290,30 @@ void CodeGenerator::gen_assign(const AssignStmt* stmt, FunctionContext& func) {
 	}
 
 	gen_store_to_variable(stmt->name, value_reg, func, stmt);
+}
+
+// The read is a structural clone of the target, so the two walk in step.
+// Innermost subscripts first, matching the order the store resolves them.
+void CodeGenerator::pin_compound_subscripts(const Expr* target, const Expr* read,
+	FunctionContext& func)
+{
+	if (auto* index = dynamic_cast<const IndexExpr*>(target)) {
+		auto* read_index = dynamic_cast<const IndexExpr*>(read);
+		if (read_index == nullptr) {
+			return;
+		}
+		pin_compound_subscripts(index->object.get(), read_index->object.get(), func);
+		if (dynamic_cast<const LiteralExpr*>(index->index.get()) != nullptr) {
+			return;
+		}
+		const int key_reg = gen_expr(index->index.get(), func);
+		func.pinned_exprs[index->index.get()] = key_reg;
+		func.pinned_exprs[read_index->index.get()] = key_reg;
+	} else if (auto* member = dynamic_cast<const MemberCallExpr*>(target)) {
+		if (auto* read_member = dynamic_cast<const MemberCallExpr*>(read)) {
+			pin_compound_subscripts(member->object.get(), read_member->object.get(), func);
+		}
+	}
 }
 
 void CodeGenerator::gen_store_to_variable(const std::string& name, int value_reg,
@@ -4267,6 +4301,16 @@ void CodeGenerator::gen_expr_stmt(const ExprStmt* stmt, FunctionContext& func) {
 }
 
 int CodeGenerator::gen_expr(const Expr* expr, FunctionContext& func) {
+	if (!func.pinned_exprs.empty()) {
+		if (auto pinned = func.pinned_exprs.find(expr); pinned != func.pinned_exprs.end()) {
+			const int reg = alloc_register(func);
+			func.ir.instructions.emplace_back(IROpcode::MOVE, IRValue::reg(reg),
+				IRValue::reg(pinned->second));
+			set_register_type(func, reg, get_register_type(func, pinned->second));
+			set_register_struct(func, reg, get_register_struct(func, pinned->second));
+			return reg;
+		}
+	}
 	// The chain a `?.` belongs to answers null as a whole, so the outermost link
 	// owns the result register and the one label every safe link branches to.
 	if (auto* member = dynamic_cast<const MemberCallExpr*>(expr);

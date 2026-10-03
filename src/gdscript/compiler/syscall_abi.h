@@ -38,6 +38,8 @@ constexpr SyscallABI syscall_abi(unsigned number, int64_t operation = -1) {
 	case ECALL_ARRAY_WINDOW: return {7, 1, true};
 	case ECALL_DICTIONARY_OPS:
 		if (operation == int(Dictionary_Op::GET_SIZE)) return {2, 1, true};
+		if (operation >= int(Dictionary_Op::OPERATE) && operation <= int(Dictionary_Op::OPERATE_RAW_STR))
+			return {6, 0, true};
 		return {5, 1, true}; // some forms use a4
 	case ECALL_STRING_AT: return {2, 1, true};
 	case ECALL_STRING_SIZE: return {1, 1, true};
@@ -152,7 +154,9 @@ constexpr bool valid_counted_syscall_encoding(uint32_t word) {
 	if (valid_counted_syscall(word)) return true;
 	switch (word >> 20) {
 	case ECALL_VSCOPE: return valid_counted_syscall(word, int(Scope_Op::MARK));
-	case ECALL_DICTIONARY_OPS: return valid_counted_syscall(word, int(Dictionary_Op::GET_SIZE));
+	case ECALL_DICTIONARY_OPS:
+		return valid_counted_syscall(word, int(Dictionary_Op::GET_SIZE)) ||
+			valid_counted_syscall(word, int(Dictionary_Op::OPERATE));
 	case ECALL_UTILITY:
 		return valid_counted_syscall(word, int(Utility_Op::RANDI)) ||
 			valid_counted_syscall(word, int(Utility_Op::RANDI_RANGE)) ||

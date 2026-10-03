@@ -73,6 +73,8 @@ private:
 	struct FunctionContext {
 		IRFunction ir;
 		std::vector<Scope> scopes;
+		// Subscripts of a compound assignment, evaluated once (gen_assign).
+		std::unordered_map<const Expr*, int> pinned_exprs;
 		std::unordered_map<int, IRInstruction::TypeHint> register_types;
 		std::unordered_map<int, TypeSet> declared_sets;
 		// A safe `is` branch may re-read a union member with one known tag.
@@ -136,6 +138,7 @@ private:
 	void gen_var_decl(const VarDeclStmt* stmt, FunctionContext& func,
 		bool conditional_binding = false);
 	void gen_assign(const AssignStmt* stmt, FunctionContext& func);
+	void pin_compound_subscripts(const Expr* target, const Expr* read, FunctionContext& func);
 	void gen_return(const ReturnStmt* stmt, FunctionContext& func);
 	void gen_if(const IfStmt* stmt, FunctionContext& func);
 	void gen_if_binding(const IfStmt* stmt, FunctionContext& func);

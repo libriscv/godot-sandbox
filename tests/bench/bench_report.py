@@ -52,8 +52,10 @@ CATEGORIES = (
     ("calls", ("call overhead", "recursion")),
     ("containers", ("array append + index", "packed array fill + sum",
                     "packed array axpy", "packed array walk",
-                    "typed array fill + sum",
-                    "dictionary set + get", "container size")),
+                    "typed array fill + sum", "container size")),
+    ("dictionaries", ("dictionary set + get", "dictionary get",
+                      "dictionary get default", "dictionary string keys",
+                      "dictionary member keys", "dictionary counters")),
     ("strings", ("string build", "string iterate")),
     ("guest dispatch", ("logic CPU dispatch", "single-instruction step")),
 )
