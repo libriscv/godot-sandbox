@@ -344,7 +344,7 @@ static inline void object_call(Sandbox &emu, godot::Object *obj,
 }
 
 // For methods that pass a second argument with the actual call/target name (eg. emit_signal)
-enum class ByName : uint8_t { NONE, CALL, CALLV, GET, SET };
+enum class ByName : uint8_t { NONE, CALL, CALLV, GET, SET, CONNECT };
 struct ByNameMethod {
 	ByName kind;
 	int name_arg;
@@ -363,6 +363,8 @@ static ByNameMethod by_name_method(std::string_view m) {
 	if (m == "set" || m == "set_indexed" || m == "set_deferred" || m == "set_thread_safe" ||
 			m == "set_deferred_thread_group")
 		return { ByName::SET, 0 };
+	if (m == "connect")
+		return { ByName::CONNECT, 1 };
 	return { ByName::NONE, 0 };
 }
 
@@ -386,6 +388,26 @@ static void check_method_reference(const Sandbox &emu, godot::Object *obj, const
 		const CharString utf8 = name.utf8();
 		if (by_name_method(std::string_view(utf8.get_data(), utf8.length())).kind != ByName::NONE)
 			refuse_by_name("Method reference not allowed under restrictions: ", name);
+	}
+}
+
+static void check_connected_callable(const Sandbox &emu, const Variant &arg) {
+	if (variant_type(arg) != Variant::CALLABLE)
+		return;
+	const Callable callable = arg;
+	const StringName method = callable.get_method();
+	if (method.is_empty())
+		return;
+	godot::Object *target = callable.get_object();
+	if (target == nullptr)
+		return;
+	const String name = method;
+	if (UNLIKELY(!emu.is_allowed_method(target, name)))
+		refuse_by_name("Banned method connected: ", name);
+	if (UNLIKELY(!emu.is_fully_unrestricted())) {
+		const CharString utf8 = name.utf8();
+		if (by_name_method(std::string_view(utf8.get_data(), utf8.length())).kind != ByName::NONE)
+			refuse_by_name("Banned method connected under restrictions: ", name);
 	}
 }
 
@@ -435,6 +457,9 @@ static void check_by_name_call(const Sandbox &emu, godot::Object *obj, std::stri
 			if (UNLIKELY(!emu.is_allowed_property(obj, property, true)))
 				refuse_by_name("Banned property accessed: ", property);
 		} break;
+		case ByName::CONNECT:
+			check_connected_callable(emu, name_arg);
+			break;
 		case ByName::NONE:
 			break;
 	}
@@ -492,14 +517,11 @@ static void check_signal_call(const Sandbox &emu, const Variant &signal_variant,
 		ERR_PRINT(String("Signal::call(): Method not allowed: ") + object_method);
 		throw std::runtime_error(std::string("Signal::call(): Method not allowed: ") + object_method);
 	}
-	if (method_name == "connect" && argc >= 1 && args[0]->get_type() == Variant::CALLABLE) {
-		const Callable callable = *args[0];
-		godot::Object *target = callable.is_custom() ? nullptr : callable.get_object();
-		if (target != nullptr && UNLIKELY(!emu.is_allowed_method(target, callable.get_method()))) {
-			ERR_PRINT("Banned method connected: " + String(callable.get_method()));
-			throw std::runtime_error("Banned method connected: " +
-					std::string(String(callable.get_method()).utf8().get_data()));
-		}
+	if (method_name == "connect") {
+		if (args == nullptr && UNLIKELY(!emu.is_fully_unrestricted()))
+			refuse_by_name("Method reference not allowed under restrictions: ", "connect");
+		if (argc >= 1)
+			check_connected_callable(emu, *args[0]);
 	}
 }
 
@@ -2614,11 +2636,9 @@ APICALL(api_obj) {
 				ERR_PRINT("Banned method called: connect");
 				throw std::runtime_error("Banned method called: connect");
 			}
-			if (UNLIKELY(!emu.is_allowed_method(target, method_name))) {
-				ERR_PRINT("Banned method connected: " + method_name);
-				throw std::runtime_error("Banned method connected: " + std::string(method_name.utf8()));
-			}
-			obj->connect(signal_name, Callable(target, method_name));
+			const Callable callable(target, method_name);
+			check_connected_callable(emu, callable);
+			obj->connect(signal_name, callable);
 		} break;
 		case Object_Op::DISCONNECT: {
 			GuestVariant *vars = machine.memory.memarray<GuestVariant>(gvar, 3);

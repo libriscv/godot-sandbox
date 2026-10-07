@@ -2113,6 +2113,79 @@ func allowed_by_name(api):
 	s.queue_free()
 	ts.queue_free()
 
+func test_every_connect_route_checks_the_connected_method():
+	var gdscript_code = """
+func via_object_connect(api, target):
+	api.connect("fired", target)
+func via_call_connect(api, target):
+	api.call("connect", "fired", target)
+func via_callv_connect(api, target):
+	api.callv("connect", ["fired", target])
+func via_bound_signal_connect(api, target):
+	api.fired.connect(target.unbind(1).bind(1))
+func via_bound_object_connect(api, target):
+	api.connect("fired", target.unbind(1).bind(1))
+func via_signal_connect_reference(api, target):
+	var f = api.fired.connect
+	f.call(target)
+func via_object_connect_reference(api, target):
+	var f = api.connect
+	f.call("fired", target)
+func via_created_connect_reference(api, target):
+	Callable.create(Signal(api, "fired"), "connect").call(target)
+
+func connect_lambda(api):
+	api.fired.connect(func(): pass)
+func emit(api):
+	api.emit_signal("fired")
+"""
+	var ts : Sandbox = Sandbox.new()
+	ts.set_program(Sandbox_TestsTests)
+	var compiled_elf = ts.vmcall("compile_to_elf", gdscript_code)
+	assert_false(compiled_elf.is_empty(), "Compiled ELF should not be empty")
+
+	var api := SignalSource.new()
+	var s = Sandbox.new()
+	s.load_buffer(compiled_elf)
+	s.set_method_allowed_callback(func(_sandbox, _obj, method): return method != "_on_fired")
+
+	for fn in ["via_object_connect", "via_call_connect", "via_callv_connect",
+			"via_bound_signal_connect", "via_bound_object_connect"]:
+		var exceptions = s.get_exceptions()
+		s.vmcallv(fn, api, api._on_fired)
+		assert_eq(s.get_exceptions(), exceptions + 1, fn + " should be refused")
+		assert_engine_error("Banned method connected: _on_fired")
+		assert_engine_error("Exception: Banned method connected: _on_fired")
+	for fn in ["via_signal_connect_reference", "via_object_connect_reference",
+			"via_created_connect_reference"]:
+		var exceptions = s.get_exceptions()
+		s.vmcallv(fn, api, api._on_fired)
+		assert_eq(s.get_exceptions(), exceptions + 1, fn + " should be refused")
+		assert_engine_error("Method reference not allowed under restrictions: connect")
+		assert_engine_error("Exception: Method reference not allowed under restrictions: connect")
+	assert_eq(api.fired.get_connections().size(), 0, "No refused route may connect")
+
+	var exceptions = s.get_exceptions()
+	s.vmcallv("via_object_connect", api, Callable(api, "call").bind("_on_fired"))
+	assert_eq(s.get_exceptions(), exceptions + 1, "A by-name dispatcher should not be connectable")
+	assert_engine_error("Banned method connected under restrictions: call")
+	assert_engine_error("Exception: Banned method connected under restrictions: call")
+	assert_eq(api.fired.get_connections().size(), 0, "The dispatcher was not connected")
+
+	s.vmcallv("emit", api)
+	assert_eq(api.count, 0, "Emitting reaches nothing the guest was refused")
+
+	s.vmcallv("connect_lambda", api)
+	assert_eq(api.fired.get_connections().size(), 1, "A guest lambda names no host method")
+
+	s.set_method_allowed_callback(func(_sandbox, _obj, _method): return true)
+	s.vmcallv("via_bound_signal_connect", api, api._on_fired)
+	s.vmcallv("emit", api)
+	assert_eq(api.count, 1, "An allowed bound method still connects")
+
+	s.queue_free()
+	ts.queue_free()
+
 func test_array_iteration():
 	# Test for item in array iteration
 	var gdscript_code = """
