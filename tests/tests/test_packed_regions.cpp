@@ -3,8 +3,6 @@
 #include <cstdlib>
 #include <vector>
 
-// Packed array regions driven by hand, the way a hostile guest could, against the host's
-// ECALL_PACKED_ACQUIRE and ECALL_PACKED_RELEASE. tests/test_packed_regions.gd checks the host.
 MAKE_SYSCALL(ECALL_PACKED_ACQUIRE, long, test_packed_acquire, const Variant *, int, void *, long);
 MAKE_SYSCALL(ECALL_PACKED_RELEASE, long, test_packed_release, const Variant *, int, void *);
 MAKE_SYSCALL(ECALL_VASSIGN, unsigned, test_packed_vassign, unsigned, unsigned);

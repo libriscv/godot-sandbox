@@ -1,8 +1,6 @@
 extends GutTest
 
-# What a guest can do with ECALL_PACKED_ACQUIRE and ECALL_PACKED_RELEASE that compiled
-# SafeGDScript never does: each case ends in a guest exception or a defined store, and the
-# host's arrays and heap stay whole. The guest side is tests/test_packed_regions.cpp.
+# Hostile packed region calls; the guest side is tests/test_packed_regions.cpp.
 
 var Sandbox_TestsTests = load("res://tests/tests.elf")
 

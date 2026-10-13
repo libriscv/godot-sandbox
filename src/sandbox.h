@@ -439,25 +439,18 @@ public:
 
 	// -= Packed array regions (sandbox_syscalls_packed.cpp) =-
 
-	/// @brief A Packed*Array a guest region copied with ECALL_PACKED_ACQUIRE and has not
-	/// released yet. An exception unwinds the region without its release, and so does a
-	/// call that returns without one, so handle_exception() and the end of the call store
-	/// each such copy (the guest's writes up to the error, as element-by-element access
-	/// would have left the array) and free it.
 	struct PackedAcquisition {
-		const CurrentState *level; // the call that acquired it
-		int32_t index; // the guest Variant's scoped index, resolved again before a store
+		const CurrentState *level;
+		int32_t index;
 		int type;
-		uint64_t identity; // packed_identity() of the array it was copied from
+		uint64_t identity;
 		gaddr_t descriptor;
 		gaddr_t data;
 		uint64_t size;
-		bool written; // PACKED_WRITTEN: store even if the dirty word is clear
+		bool written;
 	};
 	void packed_acquired(const PackedAcquisition &acquisition);
-	/// @return The copy acquired at this descriptor, now forgotten, or 0 if there is none.
 	gaddr_t packed_released(gaddr_t descriptor);
-	/// @brief Store and free every copy acquired at the current call level or deeper.
 	void commit_packed_acquisitions() noexcept;
 
 	/// @brief Set the current tree base, which is the node that the sandbox will use for accessing the node tree.

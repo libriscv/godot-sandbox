@@ -1557,7 +1557,6 @@ void Sandbox::vmcall_internal(gaddr_t address, const Variant **args, int argc,
 		Sandbox &self;
 		CurrentState &state;
 		~CallStateScope() {
-			// A region the call returned from without its release ends with the call.
 			self.commit_packed_acquisitions();
 			state.reset();
 			self.m_current_state -= 1;

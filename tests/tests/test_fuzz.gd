@@ -173,7 +173,6 @@ func write(n):
 	assert_engine_error("Exception: Banned property set: name")
 	assert_eq(target.name, "Target", "and the property never changed")
 
-# A guest names the packed type itself, and NIL has no internal getter to call.
 func test_fuzz_packed_calls_refuse_a_non_packed_subject():
 	for syscall in [568, 569]:
 		var s := _make_sandbox()
