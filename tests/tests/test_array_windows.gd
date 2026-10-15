@@ -521,7 +521,7 @@ func copied(a, b: PackedInt32Array):
 			expected += v
 		assert_eq(s.vmcallv("sum", a), expected, "untyped PackedInt32Array of %d" % n)
 		assert_eq(s.vmcallv("sum", PackedInt64Array(Array(a))), expected, "untyped PackedInt64Array of %d" % n)
-		assert_eq(s.vmcallv("sum", PackedFloat64Array(Array(a))), float(expected), "untyped PackedFloat64Array of %d" % n)
+		assert_eq(s.vmcallv("sum_from", PackedFloat64Array(Array(a)), 0.0), float(expected), "untyped PackedFloat64Array of %d" % n)
 		assert_eq(s.vmcallv("sum", Array(a)), expected, "an Array still walks")
 	assert_eq(s.vmcallv("sum", PackedByteArray([1, 2, 250])), 253, "bytes")
 	assert_eq(s.vmcallv("sum_from", PackedFloat32Array([0.5, 1.25]), 0.0), 1.75, "float32 widens")
