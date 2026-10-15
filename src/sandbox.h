@@ -437,6 +437,22 @@ public:
 	auto &state() const { return *m_current_state; }
 	auto &state() { return *m_current_state; }
 
+	// -= Packed array regions (sandbox_syscalls_packed.cpp) =-
+
+	struct PackedAcquisition {
+		const CurrentState *level;
+		int32_t index;
+		int type;
+		uint64_t identity;
+		gaddr_t descriptor;
+		gaddr_t data;
+		uint64_t size;
+		bool written;
+	};
+	void packed_acquired(const PackedAcquisition &acquisition);
+	gaddr_t packed_released(gaddr_t descriptor);
+	void commit_packed_acquisitions() noexcept;
+
 	/// @brief Set the current tree base, which is the node that the sandbox will use for accessing the node tree.
 	/// @param tree_base The tree base node.
 	/// @note The tree base is the owner node that the sandbox will use to access the node tree. When scripts
@@ -1110,6 +1126,7 @@ private:
 	void initialize_syscalls_runtime();
 	static void initialize_syscalls();
 	static void initialize_syscalls_2d();
+	static void initialize_syscalls_packed();
 	static void initialize_syscalls_3d();
 	GuestVariant *setup_arguments(gaddr_t &sp, const Variant **args, int argc, ArgumentABI p_abi);
 	void setup_arguments_native(gaddr_t arrayDataPtr, GuestVariant *v, const Variant **args, int argc);
@@ -1160,6 +1177,7 @@ private:
 	bool hold_unrestricted_object(uint64_t object_id, godot::Object *obj);
 
 	CurrentState *m_current_state = nullptr;
+	std::vector<PackedAcquisition> m_packed_acquisitions;
 	// State stack, with the permanent (initial) state at index 0.
 	// That means eg. static Variant values are held stored in the state at index 0,
 	// so that they can be accessed by future VM calls, and not lost when a call ends.

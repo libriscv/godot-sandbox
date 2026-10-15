@@ -8,6 +8,7 @@ add_sandbox_program(unittests
 	"tests/test_basic.cpp"
 	"tests/test_bench.cpp"
 	"tests/test_math.cpp"
+	"tests/test_packed_regions.cpp"
 	"tests/test_properties.cpp"
 	"tests/test_gdscript_compiler.cpp"
 )

@@ -146,11 +146,16 @@
 #define ECALL_STRING_CODEPOINT_BATCH (GAME_API_BASE + 65)
 
 #define ECALL_VARIANT_SET (GAME_API_BASE + 66)
+// JNI-style Packed*Array copy: ACQUIRE(variant, type, descriptor{data, size, identity, dirty}, expected)
+// returns 0 on success, else 1 not worth it, 2 wrong type, 3 no room. RELEASE stores a written copy in place.
+#define ECALL_PACKED_ACQUIRE (GAME_API_BASE + 68)
+#define ECALL_PACKED_RELEASE (GAME_API_BASE + 69)
+#define PACKED_WRITTEN 0x100
 
 // Raw elements of a typed or packed array
 #define ECALL_ARRAY_WINDOW (GAME_API_BASE + 67)
 
-#define ECALL_LAST (GAME_API_BASE + 68)
+#define ECALL_LAST (GAME_API_BASE + 70)
 
 #define STRINGIFY_HELPER(x) #x
 #define STRINGIFY(x) STRINGIFY_HELPER(x)
