@@ -38,7 +38,9 @@ static constexpr bool VERBOSE_PROPERTIES = false;
 static const int HEAP_SYSCALLS_BASE = 480;
 static const int MEMORY_SYSCALLS_BASE = 485;
 static const std::vector<std::string> program_arguments = { "program" };
-static riscv::Machine<RISCV_ARCH> dummy_machine;
+// The placeholder runs no program, so it needs no arena: the default one is a 64MB new[] outside
+// Linux and FreeBSD, committed as the library loads.
+static riscv::Machine<RISCV_ARCH> dummy_machine{ riscv::MachineOptions<RISCV_ARCH>{ .use_memory_arena = false } };
 enum SandboxPropertyNameIndex : int {
 	PROP_REFERENCES_MAX,
 	PROP_COROUTINES_MAX,
