@@ -644,3 +644,161 @@ func walk_negate() -> void:
 	node.call("scale_weights", 2.0)
 	assert_eq(node.get("weights"), [1.0, 3.0], "an Array[float] member")
 	node.free()
+
+const RANDOM_SOURCE := """
+func rnd_sum(a: PackedInt32Array, steps: int) -> int:
+	var s := 0
+	var seed := 1
+	var n := a.size()
+	for i in steps:
+		seed = (seed * 1103515245 + 12345) & 0x7FFFFFFF
+		s += a[seed % n] * (i % 7 + 1)
+	return s
+
+func rnd_bump(a: PackedInt32Array, steps: int) -> PackedInt32Array:
+	var seed := 7
+	var n := a.size()
+	for i in steps:
+		seed = (seed * 1103515245 + 12345) & 0x7FFFFFFF
+		var k := seed % n
+		a[k] = a[k] + i
+	return a
+
+func rnd_mixed_sign(a: PackedInt64Array, steps: int) -> PackedInt64Array:
+	var seed := 3
+	var n := a.size()
+	for i in steps:
+		seed = (seed * 1103515245 + 12345) & 0x7FFFFFFF
+		var k := seed % n
+		if i % 2 == 0:
+			a[k - n] = a[k] + 1
+		else:
+			a[k] = a[k - n] * 2 % 1000003
+	return a
+
+func backward_bump(a: PackedInt32Array) -> PackedInt32Array:
+	var n := a.size()
+	for i in n:
+		a[n - 1 - i] = a[n - 1 - i] * 2 + i
+	return a
+
+func rnd_vectors(a: PackedVector3Array, steps: int) -> PackedVector3Array:
+	var seed := 5
+	var n := a.size()
+	for i in steps:
+		seed = (seed * 1103515245 + 12345) & 0x7FFFFFFF
+		var k := seed % n
+		a[k] = a[k] + Vector3(1, i, -1)
+	return a
+
+func rnd_typed(a: Array[int], steps: int) -> Array[int]:
+	var seed := 11
+	var n := a.size()
+	for i in steps:
+		seed = (seed * 1103515245 + 12345) & 0x7FFFFFFF
+		var k := seed % n
+		a[k] = a[k] * 3 + i
+	return a
+
+func rnd_then_past_end(a: PackedInt32Array, steps: int) -> int:
+	var s := 0
+	var seed := 1
+	var n := a.size()
+	for i in steps + 1:
+		seed = (seed * 1103515245 + 12345) & 0x7FFFFFFF
+		s += a[seed % n if i < steps else n]
+	return s
+
+func seq_sum(a: PackedInt32Array) -> int:
+	var s := 0
+	for i in a.size():
+		s += a[i]
+	return s
+"""
+
+func _lcg(seed: int) -> int:
+	return (seed * 1103515245 + 12345) & 0x7FFFFFFF
+
+func _expected_rnd_sum(a: PackedInt32Array, steps: int) -> int:
+	var s := 0
+	var seed := 1
+	for i in steps:
+		seed = _lcg(seed)
+		s += a[seed % a.size()] * (i % 7 + 1)
+	return s
+
+func test_random_access_reads_and_writes():
+	var s := _compile(RANDOM_SOURCE)
+	for n in [1, 10, 256, 257, 3000, 70000]:
+		var steps: int = 4 * n
+		var a := _ints(n)
+		assert_eq(s.vmcallv("rnd_sum", a, steps), _expected_rnd_sum(a, steps), "random reads of %d" % n)
+
+		var bumped := a.duplicate()
+		var seed := 7
+		for i in steps:
+			seed = _lcg(seed)
+			bumped[seed % n] += i
+		assert_eq(s.vmcallv("rnd_bump", a.duplicate(), steps), bumped, "random writes of %d" % n)
+
+		var wide := PackedInt64Array(Array(a))
+		var mixed := wide.duplicate()
+		seed = 3
+		for i in steps:
+			seed = _lcg(seed)
+			var k: int = seed % n
+			if i % 2 == 0:
+				mixed[k - n] = mixed[k] + 1
+			else:
+				mixed[k] = mixed[k - n] * 2 % 1000003
+		assert_eq(s.vmcallv("rnd_mixed_sign", wide, steps), mixed, "negative and positive indices of %d" % n)
+
+		var back := a.duplicate()
+		for i in n:
+			back[n - 1 - i] = back[n - 1 - i] * 2 + i
+		assert_eq(s.vmcallv("backward_bump", a.duplicate(), 0), back, "a backward walk of %d" % n)
+	s.queue_free()
+
+func test_random_access_to_vectors_and_typed_arrays():
+	var s := _compile(RANDOM_SOURCE)
+	for n in [5, 300, 5000]:
+		var steps: int = 3 * n
+		var v := PackedVector3Array()
+		var typed: Array[int] = []
+		for i in n:
+			v.append(Vector3(i, -i, i * 0.5))
+			typed.append(i - 2)
+		var moved := v.duplicate()
+		var seed := 5
+		for i in steps:
+			seed = _lcg(seed)
+			moved[seed % n] += Vector3(1, i, -1)
+		assert_eq(s.vmcallv("rnd_vectors", v, steps), moved, "PackedVector3Array of %d" % n)
+		var tripled := typed.duplicate()
+		seed = 11
+		for i in steps:
+			seed = _lcg(seed)
+			tripled[seed % n] = tripled[seed % n] * 3 + i
+		assert_eq(s.vmcallv("rnd_typed", typed, steps), tripled, "Array[int] of %d" % n)
+	s.queue_free()
+
+func test_a_heap_copy_serves_random_access_and_is_freed():
+	var s := _compile(RANDOM_SOURCE)
+	var a := _ints(20000)
+	var allocations := s.get_heap_allocation_counter()
+	s.vmcallv("seq_sum", a)
+	assert_eq(s.get_heap_allocation_counter(), allocations, "a forward walk stays in the frame")
+
+	var usage := s.get_heap_usage()
+	assert_eq(s.vmcallv("rnd_sum", a, 80000), _expected_rnd_sum(a, 80000), "random reads")
+	assert_gt(s.get_heap_allocation_counter(), allocations, "random reads move the array to the heap")
+	assert_eq(s.get_heap_usage(), usage, "and the loop's exit frees it")
+	s.vmcallv("rnd_bump", a, 80000)
+	assert_eq(s.get_heap_usage(), usage, "a written copy is freed too")
+
+	var before := s.get_exceptions()
+	assert_null(s.vmcallv("rnd_then_past_end", a, 80000), "an index past the end still throws")
+	assert_eq(s.get_exceptions(), before + 1, "as an exception")
+	assert_engine_error("out of bounds")
+	assert_eq(s.get_heap_usage(), usage, "the call that threw freed its copy")
+	s.queue_free()

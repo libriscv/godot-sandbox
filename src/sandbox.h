@@ -103,6 +103,15 @@ public:
 				slot = 0;
 		}
 
+		/// Heap runs of typed array windows (ECALL_ARRAY_WINDOW_SEEK), by window
+		/// state. A flush frees one; release_call_state() frees what a throw left.
+		struct WindowCopy {
+			gaddr_t state;
+			gaddr_t data;
+			size_t bytes;
+		};
+		std::vector<WindowCopy> window_copies;
+
 		void append(Variant &&value);
 		/// Reserve for max_refs and drop what the previous program scoped. No reserve-only
 		/// variant: growing the reservation reallocates variants, dangling scoped_variants.
@@ -436,6 +445,23 @@ public:
 	/// @note The call state is a stack of states, with the current state stored in m_current_state.
 	auto &state() const { return *m_current_state; }
 	auto &state() { return *m_current_state; }
+
+	const CurrentState::WindowCopy *find_window_copy(gaddr_t state) const {
+		for (const CurrentState::WindowCopy &copy : m_current_state->window_copies) {
+			if (copy.state == state)
+				return &copy;
+		}
+		return nullptr;
+	}
+	gaddr_t create_window_copy(gaddr_t state, size_t bytes);
+	void release_window_copy(gaddr_t state);
+	/// Ends a call level: frees its window copies, then drops its temporaries.
+	void release_call_state(CurrentState &state) noexcept {
+		if (UNLIKELY(!state.window_copies.empty()))
+			release_window_copies(state);
+		state.reset();
+	}
+	void release_window_copies(CurrentState &state) noexcept;
 
 	/// @brief Set the current tree base, which is the node that the sandbox will use for accessing the node tree.
 	/// @param tree_base The tree base node.

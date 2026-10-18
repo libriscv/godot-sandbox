@@ -25,9 +25,16 @@ namespace gdscript {
 inline constexpr const char *FAST_EXIT_SYMBOL = "fast_exit";
 inline constexpr size_t FAST_EXIT_SIZE = 8;
 
-// A typed array window's frame: the words holding its first index, element
-// count and dirty flag, then the element buffer.
+// A typed array window's frame: the state ECALL_ARRAY_WINDOW_SEEK reads and
+// writes, then the element buffer.
 struct ArrayWindowFrame {
+	static constexpr int FIRST = 0;
+	static constexpr int COUNT = 8;
+	static constexpr int DIRTY = 16;
+	static constexpr int BASE = 24; // the heap run's element 0
+	static constexpr int MISSES = 32;
+	static constexpr int HEAP = 40; // the heap run's length, 0 for a frame run
+	static constexpr int STATE_SIZE = 48;
 	int state_offset = 0;
 	int buffer_offset = 0;
 	int element_size = 0;
@@ -180,7 +187,7 @@ private:
 	void gen_syscall_array_window_size(const IRInstruction& instr, int result_vreg);
 	const ArrayWindowFrame& array_window(const IRInstruction& instr, size_t operand) const;
 	void emit_array_window_element(const ArrayWindowFrame& window, int array_vreg, uint8_t index);
-	void emit_array_window_call(const ArrayWindowFrame& window, int array_vreg, bool load);
+	void emit_array_window_call(const ArrayWindowFrame& window, int array_vreg, int op);
 	void gen_array_window(const IRInstruction& instr);
 	void gen_syscall_array_batch(const IRInstruction& instr, int result_vreg);
 	void gen_syscall_dictionary_ops(const IRInstruction& instr, int result_vreg);

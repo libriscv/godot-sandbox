@@ -137,6 +137,10 @@ static constexpr Shape SHAPES[] = {
 	{ ECALL_ARRAY_SIZE, { Arg::IDX_ARRAY } },
 	{ ECALL_ARRAY_BATCH, { Arg::IDX_ARRAY, Arg::SMALL, Arg::SMALL, Arg::OUT } },
 	{ ECALL_ARRAY_WINDOW, { Arg::IDX_ANY, Arg::OUT, Arg::SMALL, Arg::SMALL, Arg::SMALL, Arg::SMALL, Arg::OP } },
+	// A load with nothing to write back, which a 4-element array can satisfy.
+	{ ECALL_ARRAY_WINDOW, { Arg::IDX_PACKED, Arg::OUT, Arg::SMALL, Arg::NOARGS, Arg::SMALL, Arg::SMALL, Arg::OP } },
+	{ ECALL_ARRAY_WINDOW_SEEK, { Arg::IDX_ANY, Arg::OUT, Arg::SMALL, Arg::OP, Arg::OP } },
+	{ ECALL_ARRAY_WINDOW_SEEK, { Arg::IDX_PACKED, Arg::OUT, Arg::SMALL, Arg::OP, Arg::NOARGS } },
 	{ ECALL_DICTIONARY_OPS, { Arg::OP, Arg::IDX_DICT, Arg::VPTR, Arg::VPTR, Arg::VPTR } },
 	{ ECALL_STRING_CREATE, { Arg::NAME, Arg::NAMELEN } },
 	{ ECALL_STRING_OPS, { Arg::OP, Arg::IDX_STRING, Arg::SMALL, Arg::VPTR } },
@@ -894,7 +898,7 @@ Dictionary Sandbox::assault(const String &test, int64_t iterations) {
 			for (size_t level = 1; level < this->m_states.size(); level++) {
 				for (Variant &v : this->m_states[level].variants)
 					break_container_cycles(v);
-				this->m_states[level].reset();
+				this->release_call_state(this->m_states[level]);
 			}
 			this->m_current_state = saved_state;
 			machine().cpu.registers() = saved_registers;

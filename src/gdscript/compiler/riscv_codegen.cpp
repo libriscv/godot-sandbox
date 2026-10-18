@@ -809,7 +809,8 @@ void RISCVCodeGen::plan_frame(const IRFunction& func) {
 	m_fn.next_variant_slot = max_variants + SCRATCH_VARIANT_SLOTS + batch_slots;
 	m_fn.variant_space = variant_space;
 
-	// Typed array windows: first index, count and dirty flag, then the buffer.
+	// Typed array windows: the state ECALL_ARRAY_WINDOW_SEEK reads, then the buffer.
+	static_assert(IRFunction::ArrayWindow::ELEMENTS == ARRAY_WINDOW_FRAME_ELEMENTS);
 	m_fn.array_windows.clear();
 	int array_window_space = 0;
 	for (const IRFunction::ArrayWindow& window : func.array_windows) {
@@ -835,8 +836,9 @@ void RISCVCodeGen::plan_frame(const IRFunction& func) {
 				break;
 		}
 		frame.state_offset = saved_reg_space + variant_space + codepoint_batch_space + array_window_space;
-		frame.buffer_offset = frame.state_offset + 24;
-		array_window_space += 24 + ((int(IRFunction::ArrayWindow::ELEMENTS) * frame.element_size + 7) & ~7);
+		frame.buffer_offset = frame.state_offset + ArrayWindowFrame::STATE_SIZE;
+		array_window_space += ArrayWindowFrame::STATE_SIZE +
+			((int(IRFunction::ArrayWindow::ELEMENTS) * frame.element_size + 7) & ~7);
 		m_fn.array_windows[window.token] = frame;
 	}
 	if (array_window_space > 0) m_fn.omits_frame = false;
@@ -1847,64 +1849,87 @@ const ArrayWindowFrame& RISCVCodeGen::array_window(const IRInstruction& instr, s
 }
 
 // Makes sure the element `index` names is loaded, then leaves its address in
-// T0. A miss writes a dirty window back and loads the run starting at `index`;
-// the host wraps a negative one and throws for one out of range, so the run it
-// returns always holds the element.
+// T0. A run in the frame is a bounds compare away. A heap run, which random
+// access gets moved into, keeps count at zero so every access lands in the cold
+// block, which indexes it directly. Otherwise the host writes a dirty run back,
+// loads one holding the element -- wrapping a negative index and throwing for
+// one out of range, as `a[k]` does -- and answers its address.
 void RISCVCodeGen::emit_array_window_element(const ArrayWindowFrame& window, int array_vreg,
 	uint8_t index)
 {
 	const std::string hit = gen_local_label(".window_hit");
-	emit_ld(REG_T0, REG_SP, window.state_offset);
+	const std::string seek = gen_local_label(".window_seek");
+	const std::string positive = gen_local_label(".window_positive");
+	const std::string done = gen_local_label(".window_done");
+	const int size = window.element_size;
+	int shift = -1;
+	if ((size & (size - 1)) == 0) {
+		shift = 0;
+		while ((1 << shift) < size) shift++;
+	}
+	const auto scale = [&] {
+		if (shift > 0) emit_slli(REG_T0, REG_T0, uint8_t(shift));
+		else if (shift < 0) {
+			emit_li(REG_T1, size);
+			emit_mul(REG_T0, REG_T0, REG_T1);
+		}
+	};
+	// Every path below must see the same register assignment.
+	spill_around_syscall({ REG_A0, REG_A1, REG_A2, REG_A3, REG_A4 });
+	emit_ld(REG_T0, REG_SP, window.state_offset + ArrayWindowFrame::FIRST);
 	emit_sub(REG_T0, index, REG_T0);
-	emit_ld(REG_T1, REG_SP, window.state_offset + 8);
+	emit_ld(REG_T1, REG_SP, window.state_offset + ArrayWindowFrame::COUNT);
 	// Unsigned: an index below the first one wraps to a huge offset.
 	mark_label_use(hit, m_code.size());
 	emit_bltu(REG_T0, REG_T1, 0);
 
-	spill_around_syscall({ REG_A0, REG_A1, REG_A2, REG_A3, REG_A4, REG_A5, REG_A6 });
-	emit_mv(REG_A4, index);
-	emit_array_window_call(window, array_vreg, true);
-	emit_sd(REG_A4, REG_SP, window.state_offset);
-	emit_sd(REG_A0, REG_SP, window.state_offset + 8);
-	emit_sd(REG_ZERO, REG_SP, window.state_offset + 16);
-	emit_mv(REG_T0, REG_ZERO);
+	emit_ld(REG_T1, REG_SP, window.state_offset + ArrayWindowFrame::HEAP);
+	mark_label_use(seek, m_code.size());
+	emit_beq(REG_T1, REG_ZERO, 0);
+	emit_mv(REG_T0, index);
+	mark_label_use(positive, m_code.size());
+	emit_bge(REG_T0, REG_ZERO, 0);
+	emit_add(REG_T0, REG_T0, REG_T1);
+	set_label(label_id(positive), m_code.size());
+	mark_label_use(seek, m_code.size());
+	emit_bgeu(REG_T0, REG_T1, 0);
+	scale();
+	emit_ld(REG_T1, REG_SP, window.state_offset + ArrayWindowFrame::BASE);
+	emit_add(REG_T0, REG_T1, REG_T0);
+	mark_label_use(done, m_code.size());
+	emit_jal(REG_ZERO, 0);
+
+	set_label(label_id(seek), m_code.size());
+	emit_mv(REG_A2, index);
+	emit_array_window_call(window, array_vreg, ARRAY_WINDOW_SEEK_LOAD);
+	emit_mv(REG_T0, REG_A0);
+	mark_label_use(done, m_code.size());
+	emit_jal(REG_ZERO, 0);
 
 	set_label(label_id(hit), m_code.size());
-	const int size = window.element_size;
-	if ((size & (size - 1)) == 0) {
-		int shift = 0;
-		while ((1 << shift) < size) shift++;
-		if (shift > 0) emit_slli(REG_T0, REG_T0, uint8_t(shift));
-	} else {
-		emit_li(REG_T1, size);
-		emit_mul(REG_T0, REG_T0, REG_T1);
-	}
+	scale();
 	emit_add(REG_T0, REG_SP, REG_T0);
 	emit_add_offset(REG_T0, REG_T0, window.buffer_offset);
+	set_label(label_id(done), m_code.size());
 }
 
-// ECALL_ARRAY_WINDOW: write back what is dirty, then load the run starting at
-// A4 when `load`, or nothing at all.
-void RISCVCodeGen::emit_array_window_call(const ArrayWindowFrame& window, int array_vreg, bool load) {
-	emit_ld(REG_A2, REG_SP, window.state_offset);
-	emit_ld(REG_A3, REG_SP, window.state_offset + 8);
-	emit_ld(REG_T0, REG_SP, window.state_offset + 16);
-	emit_sub(REG_T0, REG_ZERO, REG_T0); // dirty is 0 or 1: a mask
-	emit_and(REG_A3, REG_A3, REG_T0);
+// ECALL_ARRAY_WINDOW_SEEK on the window's state; the element index is in A2.
+void RISCVCodeGen::emit_array_window_call(const ArrayWindowFrame& window, int array_vreg, int op) {
 	emit_container_handle(REG_A0, array_vreg, get_variant_stack_offset(array_vreg));
-	emit_add_offset(REG_A1, REG_SP, window.buffer_offset);
-	// A size query loads nothing.
-	emit_li(REG_A5, load ? IRFunction::ArrayWindow::ELEMENTS : 0);
-	emit_li(REG_A6, int64_t(window.element_type));
-	emit_syscall(ECALL_ARRAY_WINDOW);
+	emit_add_offset(REG_A1, REG_SP, window.state_offset);
+	emit_li(REG_A3, int64_t(window.element_type));
+	emit_li(REG_A4, op);
+	emit_syscall(ECALL_ARRAY_WINDOW_SEEK);
 }
 
 void RISCVCodeGen::gen_array_window(const IRInstruction& instr) {
 	switch (instr.opcode) {
 		case IROpcode::WINDOW_OPEN: {
 			const ArrayWindowFrame& window = array_window(instr, 0);
-			emit_sd(REG_ZERO, REG_SP, window.state_offset + 8);
-			emit_sd(REG_ZERO, REG_SP, window.state_offset + 16);
+			emit_sd(REG_ZERO, REG_SP, window.state_offset + ArrayWindowFrame::COUNT);
+			emit_sd(REG_ZERO, REG_SP, window.state_offset + ArrayWindowFrame::DIRTY);
+			emit_sd(REG_ZERO, REG_SP, window.state_offset + ArrayWindowFrame::MISSES);
+			emit_sd(REG_ZERO, REG_SP, window.state_offset + ArrayWindowFrame::HEAP);
 			break;
 		}
 		case IROpcode::WINDOW_GET: {
@@ -1999,21 +2024,24 @@ void RISCVCodeGen::gen_array_window(const IRInstruction& instr) {
 					break;
 			}
 			emit_li(REG_T1, 1);
-			emit_sd(REG_T1, REG_SP, window.state_offset + 16);
+			emit_sd(REG_T1, REG_SP, window.state_offset + ArrayWindowFrame::DIRTY);
 			break;
 		}
 		case IROpcode::WINDOW_FLUSH: {
 			const ArrayWindowFrame& window = array_window(instr, 1);
 			const int array_vreg = instr.operands[0].reg_index();
-			spill_around_syscall({ REG_A0, REG_A1, REG_A2, REG_A3, REG_A4, REG_A5, REG_A6 });
+			spill_around_syscall({ REG_A0, REG_A1, REG_A2, REG_A3, REG_A4 });
+			// A heap run is freed even when nothing was written to it.
 			const std::string clean = gen_local_label(".window_clean");
-			emit_ld(REG_T0, REG_SP, window.state_offset + 16);
+			emit_ld(REG_T0, REG_SP, window.state_offset + ArrayWindowFrame::DIRTY);
+			emit_ld(REG_T1, REG_SP, window.state_offset + ArrayWindowFrame::HEAP);
+			emit_or(REG_T0, REG_T0, REG_T1);
 			mark_label_use(clean, m_code.size());
 			emit_beq(REG_T0, REG_ZERO, 0);
-			emit_array_window_call(window, array_vreg, false);
+			emit_array_window_call(window, array_vreg, ARRAY_WINDOW_SEEK_FLUSH);
 			set_label(label_id(clean), m_code.size());
-			emit_sd(REG_ZERO, REG_SP, window.state_offset + 8);
-			emit_sd(REG_ZERO, REG_SP, window.state_offset + 16);
+			emit_sd(REG_ZERO, REG_SP, window.state_offset + ArrayWindowFrame::COUNT);
+			emit_sd(REG_ZERO, REG_SP, window.state_offset + ArrayWindowFrame::DIRTY);
 			break;
 		}
 		default:

@@ -668,7 +668,7 @@ void Sandbox::run_instance_initializer(gaddr_t address, gaddr_t base) {
 	}
 
 	// Keep this level active while releasing temporaries: predelete can reenter.
-	this->m_current_state->reset();
+	this->release_call_state(*this->m_current_state);
 	this->m_instance_base = previous_base;
 	this->m_current_state = previous_state;
 }
@@ -1115,7 +1115,7 @@ bool Sandbox::load(const PackedByteArray *buffer, const std::vector<std::string>
 	// Promote before restoring state; runs on the failing path too.
 	if (elevated_startup) {
 		this->promote_startup_handles();
-		this->m_current_state->reset();
+		this->release_call_state(*this->m_current_state);
 		this->m_current_state = startup_state;
 	}
 
@@ -1557,7 +1557,7 @@ void Sandbox::vmcall_internal(gaddr_t address, const Variant **args, int argc,
 		Sandbox &self;
 		CurrentState &state;
 		~CallStateScope() {
-			state.reset();
+			self.release_call_state(state);
 			self.m_current_state -= 1;
 		}
 	} call_state_scope{ *this, state };
@@ -2673,6 +2673,8 @@ Variant SandboxProperty::get(const Sandbox &sandbox) const {
 void Sandbox::CurrentState::reinitialize(unsigned level, unsigned max_refs) {
 	if (level <= 1)
 		this->variants.reserve(max_refs);
+	// The heap these lived in went with the previous machine.
+	this->window_copies.clear();
 	this->variants.clear();
 	this->scoped_objects.clear();
 	this->scoped_variants.clear();
@@ -2680,6 +2682,41 @@ void Sandbox::CurrentState::reinitialize(unsigned level, unsigned max_refs) {
 	this->clear_referenced();
 	this->dirty = false;
 }
+
+// Live windows all belong to the running frame, since a windowed loop calls
+// nothing, so a level holds at most one copy per window of its deepest loop nest.
+static constexpr size_t MAX_WINDOW_COPIES = 16;
+
+gaddr_t Sandbox::create_window_copy(gaddr_t state, size_t bytes) {
+	this->release_window_copy(state);
+	std::vector<CurrentState::WindowCopy> &copies = this->m_current_state->window_copies;
+	if (copies.size() >= MAX_WINDOW_COPIES || !machine().has_arena())
+		return 0;
+	const gaddr_t data = gaddr_t(machine().arena().malloc(bytes));
+	if (data != 0)
+		copies.push_back({ state, data, bytes });
+	return data;
+}
+
+void Sandbox::release_window_copy(gaddr_t state) {
+	std::vector<CurrentState::WindowCopy> &copies = this->m_current_state->window_copies;
+	for (auto it = copies.begin(); it != copies.end(); ++it) {
+		if (it->state == state) {
+			machine().arena().free(it->data);
+			copies.erase(it);
+			return;
+		}
+	}
+}
+
+void Sandbox::release_window_copies(CurrentState &state) noexcept {
+	if (machine().has_arena()) {
+		for (const CurrentState::WindowCopy &copy : state.window_copies)
+			machine().arena().free(copy.data);
+	}
+	state.window_copies.clear();
+}
+
 bool Sandbox::CurrentState::is_mutable_variant(const Variant &var) const {
 	// Check if the address of the variant is within the range of the current state std::vector.
 	// data() rather than &variants[0]: indexing an empty vector is undefined even when the

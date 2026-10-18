@@ -3611,13 +3611,13 @@ WindowRun window_run(int64_t start, int64_t count, int64_t size) {
 // One packed array's elements against a guest buffer, both directions. The
 // element is the engine's own type, so the buffer layout is the array's.
 template <typename Packed>
-int64_t packed_window(machine_t &machine, Variant *mutable_subject, const Variant &subject,
+int64_t packed_window(machine_t &machine, Variant *mutable_subject, const Variant &subject, int64_t size,
 		gaddr_t buffer, int64_t store_start, int64_t store_count, int64_t load_start, int64_t max_count) {
 	using Element = std::remove_cv_t<std::remove_pointer_t<decltype(std::declval<const Packed &>().ptr())>>;
 	// The engine's own array, not a copy: ptrw() copies only a shared one.
 	if (store_count > 0) {
 		Packed &packed = *VariantInternal::get_internal_value<Packed>(mutable_subject);
-		const WindowRun run = window_run(store_start, store_count, packed.size());
+		const WindowRun run = window_run(store_start, store_count, size);
 		if (UNLIKELY(run.count != store_count)) {
 			throw std::runtime_error("Packed array window write-back out of range");
 		}
@@ -3627,9 +3627,9 @@ int64_t packed_window(machine_t &machine, Variant *mutable_subject, const Varian
 	const Packed &packed = *VariantInternal::get_internal_value<Packed>(
 			store_count > 0 ? static_cast<const Variant *>(mutable_subject) : &subject);
 	if (max_count == 0) {
-		return packed.size();
+		return size;
 	}
-	const WindowRun run = window_run(load_start, max_count, packed.size());
+	const WindowRun run = window_run(load_start, max_count, size);
 	Element *destination = machine.memory.memarray<Element>(buffer, size_t(run.count));
 	std::memcpy(destination, packed.ptr() + run.first, size_t(run.count) * sizeof(Element));
 	return run.count;
@@ -3698,13 +3698,13 @@ void array_window_store(machine_t &machine, Array &array, gaddr_t buffer, const 
 	}
 }
 
-int64_t array_window(machine_t &machine, const Variant &subject, gaddr_t buffer,
+int64_t array_window(machine_t &machine, const Variant &subject, int64_t size, gaddr_t buffer,
 		int64_t store_start, int64_t store_count, int64_t load_start, int64_t max_count, Variant::Type type) {
-	// The handle shares the engine's Array: writes through it are the guest's.
-	Array array = variant_container<Array>(subject);
+	// The engine's own Array: writes through it are the guest's.
+	Array &array = variant_container<Array>(subject);
 	if (store_count > 0) {
 		throw_if_read_only(subject, "Array window (assignment)");
-		const WindowRun run = window_run(store_start, store_count, array.size());
+		const WindowRun run = window_run(store_start, store_count, size);
 		if (UNLIKELY(run.count != store_count)) {
 			throw std::runtime_error("Array window write-back out of range");
 		}
@@ -3723,9 +3723,9 @@ int64_t array_window(machine_t &machine, const Variant &subject, gaddr_t buffer,
 		}
 	}
 	if (max_count == 0) {
-		return array.size();
+		return size;
 	}
-	const WindowRun run = window_run(load_start, max_count, array.size());
+	const WindowRun run = window_run(load_start, max_count, size);
 	switch (type) {
 		case Variant::BOOL: return array_window_load<bool>(machine, array, buffer, run, type);
 		case Variant::INT: return array_window_load<int64_t>(machine, array, buffer, run, type);
@@ -3742,6 +3742,61 @@ int64_t array_window(machine_t &machine, const Variant &subject, gaddr_t buffer,
 }
 } // namespace
 
+// Elements in a typed array, or 0 for anything else.
+static int64_t window_array_size(const Variant &subject) {
+	switch (variant_type(subject)) {
+		case Variant::ARRAY: return variant_container<Array>(subject).size();
+		case Variant::PACKED_BYTE_ARRAY: return VariantInternal::get_internal_value<PackedByteArray>(&subject)->size();
+		case Variant::PACKED_INT32_ARRAY: return VariantInternal::get_internal_value<PackedInt32Array>(&subject)->size();
+		case Variant::PACKED_INT64_ARRAY: return VariantInternal::get_internal_value<PackedInt64Array>(&subject)->size();
+		case Variant::PACKED_FLOAT32_ARRAY: return VariantInternal::get_internal_value<PackedFloat32Array>(&subject)->size();
+		case Variant::PACKED_FLOAT64_ARRAY: return VariantInternal::get_internal_value<PackedFloat64Array>(&subject)->size();
+		case Variant::PACKED_VECTOR2_ARRAY: return VariantInternal::get_internal_value<PackedVector2Array>(&subject)->size();
+		case Variant::PACKED_VECTOR3_ARRAY: return VariantInternal::get_internal_value<PackedVector3Array>(&subject)->size();
+		case Variant::PACKED_VECTOR4_ARRAY: return VariantInternal::get_internal_value<PackedVector4Array>(&subject)->size();
+		case Variant::PACKED_COLOR_ARRAY: return VariantInternal::get_internal_value<PackedColorArray>(&subject)->size();
+		case Variant::PACKED_STRING_ARRAY: return VariantInternal::get_internal_value<PackedStringArray>(&subject)->size();
+		default: return 0;
+	}
+}
+
+// Writes back store_count elements from `buffer`, then loads up to max_count
+// into it; answers the count loaded, or the size when max_count is 0.
+static int64_t window_transfer(machine_t &machine, Sandbox &emu, int32_t index, const Variant &subject,
+		int64_t size, gaddr_t buffer, int64_t store_start, int64_t store_count, int64_t load_start, int64_t max_count,
+		unsigned element_type) {
+	const Variant::Type type = variant_type(subject);
+	if (type == Variant::ARRAY) {
+		return array_window(machine, subject, size, buffer, store_start, store_count,
+			load_start, max_count, Variant::Type(element_type));
+	}
+	// A packed array is a value: writing back copies a borrowed caller's first,
+	// as `a[i] = v` does, and the slot then names the copy.
+	Variant *mutable_subject = store_count > 0 ? &emu.get_mutable_scoped_variant(index) : nullptr;
+	int64_t result;
+	switch (type) {
+		case Variant::PACKED_BYTE_ARRAY: result = packed_window<PackedByteArray>(machine, mutable_subject, subject, size, buffer, store_start, store_count, load_start, max_count); break;
+		case Variant::PACKED_INT32_ARRAY: result = packed_window<PackedInt32Array>(machine, mutable_subject, subject, size, buffer, store_start, store_count, load_start, max_count); break;
+		case Variant::PACKED_INT64_ARRAY: result = packed_window<PackedInt64Array>(machine, mutable_subject, subject, size, buffer, store_start, store_count, load_start, max_count); break;
+		case Variant::PACKED_FLOAT32_ARRAY: result = packed_window<PackedFloat32Array>(machine, mutable_subject, subject, size, buffer, store_start, store_count, load_start, max_count); break;
+		case Variant::PACKED_FLOAT64_ARRAY: result = packed_window<PackedFloat64Array>(machine, mutable_subject, subject, size, buffer, store_start, store_count, load_start, max_count); break;
+		case Variant::PACKED_VECTOR2_ARRAY: result = packed_window<PackedVector2Array>(machine, mutable_subject, subject, size, buffer, store_start, store_count, load_start, max_count); break;
+		case Variant::PACKED_VECTOR3_ARRAY: result = packed_window<PackedVector3Array>(machine, mutable_subject, subject, size, buffer, store_start, store_count, load_start, max_count); break;
+		case Variant::PACKED_VECTOR4_ARRAY: result = packed_window<PackedVector4Array>(machine, mutable_subject, subject, size, buffer, store_start, store_count, load_start, max_count); break;
+		case Variant::PACKED_COLOR_ARRAY: result = packed_window<PackedColorArray>(machine, mutable_subject, subject, size, buffer, store_start, store_count, load_start, max_count); break;
+		case Variant::PACKED_STRING_ARRAY:
+			if (max_count == 0 && store_count == 0) {
+				result = size;
+				break;
+			}
+			[[fallthrough]];
+		default:
+			throw std::runtime_error("Array window: " + std::string(GuestVariant::type_name(type)) +
+				" is not a typed array");
+	}
+	return result;
+}
+
 APICALL(api_array_window) {
 	auto [index, buffer, store_start, store_count, load_start, max_count, element_type] =
 		machine.sysargs<int32_t, gaddr_t, int64_t, int64_t, int64_t, int64_t, unsigned>();
@@ -3752,37 +3807,185 @@ APICALL(api_array_window) {
 	}
 	PENALIZE(1'000 + 4 * (max_count + store_count));
 	const Variant &subject = get_scoped_variant_or_throw(emu, index, "Array window");
-	const Variant::Type type = variant_type(subject);
-	if (type == Variant::ARRAY) {
-		machine.set_result(array_window(machine, subject, buffer, store_start, store_count,
-			load_start, max_count, Variant::Type(element_type)));
+	machine.set_result(window_transfer(machine, emu, index, subject, window_array_size(subject), buffer,
+		store_start, store_count, load_start, max_count, element_type));
+}
+
+namespace {
+// A window's frame state, as riscv_codegen lays it out.
+struct WindowState {
+	int64_t first;
+	int64_t count;
+	int64_t dirty;
+	uint64_t base;
+	int64_t misses;
+	int64_t heap;
+};
+static_assert(sizeof(WindowState) == 48, "WindowState is guest ABI");
+constexpr int64_t WINDOW_FRAME_ELEMENTS = ARRAY_WINDOW_FRAME_ELEMENTS;
+constexpr size_t WINDOW_COPY_MAX_BYTES = size_t(64) << 20;
+
+int window_element_size(const Variant &subject, unsigned element_type) {
+	switch (variant_type(subject)) {
+		case Variant::PACKED_BYTE_ARRAY: return 1;
+		case Variant::PACKED_INT32_ARRAY: return 4;
+		case Variant::PACKED_INT64_ARRAY: return 8;
+		case Variant::PACKED_FLOAT32_ARRAY: return 4;
+		case Variant::PACKED_FLOAT64_ARRAY: return 8;
+		case Variant::PACKED_VECTOR2_ARRAY: return sizeof(Vector2);
+		case Variant::PACKED_VECTOR3_ARRAY: return sizeof(Vector3);
+		case Variant::PACKED_VECTOR4_ARRAY: return sizeof(Vector4);
+		case Variant::PACKED_COLOR_ARRAY: return sizeof(Color);
+		case Variant::ARRAY:
+			switch (element_type) {
+				case Variant::BOOL: return sizeof(bool);
+				case Variant::INT: return sizeof(int64_t);
+				case Variant::FLOAT: return sizeof(double);
+				case Variant::VECTOR2: return sizeof(Vector2);
+				case Variant::VECTOR2I: return sizeof(Vector2i);
+				case Variant::VECTOR3: return sizeof(Vector3);
+				case Variant::VECTOR3I: return sizeof(Vector3i);
+				case Variant::VECTOR4: return sizeof(Vector4);
+				case Variant::VECTOR4I: return sizeof(Vector4i);
+				case Variant::COLOR: return sizeof(Color);
+				default: return 0;
+			}
+		default:
+			return 0;
+	}
+}
+} // namespace
+
+// Which run a miss loads: a forward step continues forward, a backward step
+// loads the run ending at k, and an array the frame can hold loads whole. Every
+// other miss is a jump. Once the jumps have loaded as many elements as the array
+// has, the whole array moves into a heap copy owned by the call level, which
+// random access then reads at the cost of a load.
+APICALL(api_array_window_seek) {
+	auto [index, state_addr, k, element_type, op] =
+		machine.sysargs<int32_t, gaddr_t, int64_t, unsigned, int>();
+	Sandbox &emu = riscv::emu(machine);
+	SYS_TRACE("array_window_seek", index, state_addr, k, element_type, op);
+	if (UNLIKELY(op != ARRAY_WINDOW_SEEK_LOAD && op != ARRAY_WINDOW_SEEK_FLUSH)) {
+		throw std::runtime_error("Array window: unknown operation");
+	}
+	const Variant *subject = &get_scoped_variant_or_throw(emu, index, "Array window");
+	const int size = window_element_size(*subject, element_type);
+	if (UNLIKELY(size == 0)) {
+		throw std::runtime_error("Array window: not a typed array");
+	}
+	const int64_t n = window_array_size(*subject);
+	WindowState &st = *machine.memory.memarray<WindowState>(state_addr, 1);
+	const gaddr_t frame = state_addr + sizeof(WindowState);
+	const Sandbox::CurrentState::WindowCopy *copy = emu.find_window_copy(state_addr);
+	// A whole copy stays authoritative until the flush: a seek into it only
+	// changes which sign of index the window answers.
+	const bool whole = copy != nullptr && copy->bytes >= size_t(n) * size;
+
+	int64_t moved = 0;
+	if (st.dirty != 0 && !(whole && op == ARRAY_WINDOW_SEEK_LOAD)) {
+		// The run is where the host put it, whatever the state says.
+		if (whole) {
+			window_transfer(machine, emu, index, *subject, n, copy->data, 0, n, 0, 0, element_type);
+			moved += n;
+		} else if (st.count > 0) {
+			if (UNLIKELY(st.count > WINDOW_FRAME_ELEMENTS)) {
+				throw std::runtime_error("Array window: count out of range");
+			}
+			window_transfer(machine, emu, index, *subject, n, frame, st.first, st.count, 0, 0, element_type);
+			moved += st.count;
+		}
+		st.dirty = 0;
+		// Writing back a packed array may have copied it into a slot of its own.
+		if (op == ARRAY_WINDOW_SEEK_LOAD) {
+			subject = &get_scoped_variant_or_throw(emu, index, "Array window");
+		}
+	}
+
+	if (op == ARRAY_WINDOW_SEEK_FLUSH) {
+		if (copy != nullptr) {
+			emu.release_window_copy(state_addr);
+		}
+		st.count = 0;
+		st.dirty = 0;
+		st.heap = 0;
+		PENALIZE(1'000 + 4 * moved);
+		machine.set_result(0);
 		return;
 	}
-	// A packed array is a value: writing back copies a borrowed caller's first,
-	// as `a[i] = v` does, and the slot then names the copy.
-	Variant *mutable_subject = store_count > 0 ? &emu.get_mutable_scoped_variant(index) : nullptr;
-	int64_t result;
-	switch (type) {
-		case Variant::PACKED_BYTE_ARRAY: result = packed_window<PackedByteArray>(machine, mutable_subject, subject, buffer, store_start, store_count, load_start, max_count); break;
-		case Variant::PACKED_INT32_ARRAY: result = packed_window<PackedInt32Array>(machine, mutable_subject, subject, buffer, store_start, store_count, load_start, max_count); break;
-		case Variant::PACKED_INT64_ARRAY: result = packed_window<PackedInt64Array>(machine, mutable_subject, subject, buffer, store_start, store_count, load_start, max_count); break;
-		case Variant::PACKED_FLOAT32_ARRAY: result = packed_window<PackedFloat32Array>(machine, mutable_subject, subject, buffer, store_start, store_count, load_start, max_count); break;
-		case Variant::PACKED_FLOAT64_ARRAY: result = packed_window<PackedFloat64Array>(machine, mutable_subject, subject, buffer, store_start, store_count, load_start, max_count); break;
-		case Variant::PACKED_VECTOR2_ARRAY: result = packed_window<PackedVector2Array>(machine, mutable_subject, subject, buffer, store_start, store_count, load_start, max_count); break;
-		case Variant::PACKED_VECTOR3_ARRAY: result = packed_window<PackedVector3Array>(machine, mutable_subject, subject, buffer, store_start, store_count, load_start, max_count); break;
-		case Variant::PACKED_VECTOR4_ARRAY: result = packed_window<PackedVector4Array>(machine, mutable_subject, subject, buffer, store_start, store_count, load_start, max_count); break;
-		case Variant::PACKED_COLOR_ARRAY: result = packed_window<PackedColorArray>(machine, mutable_subject, subject, buffer, store_start, store_count, load_start, max_count); break;
-		case Variant::PACKED_STRING_ARRAY:
-			if (max_count == 0 && store_count == 0) {
-				result = VariantInternal::get_internal_value<PackedStringArray>(&subject)->size();
-				break;
-			}
-			[[fallthrough]];
-		default:
-			throw std::runtime_error("Array window: " + std::string(GuestVariant::type_name(type)) +
-				" is not a typed array");
+
+	const int64_t p = k < 0 ? k + n : k;
+	if (UNLIKELY(p < 0 || p >= n)) {
+		throw std::runtime_error("Array index out of bounds: " + std::to_string(k));
 	}
-	machine.set_result(result);
+	gaddr_t base = frame;
+	int64_t first = p;
+	int64_t count = 0;
+
+	if (whole) {
+		// The guest indexes a heap run itself; it only asks when its state was lost.
+		base = copy->data;
+		first = 0;
+		count = n;
+	} else {
+		const bool forward = st.count > 0 && k == st.first + st.count;
+		const bool backward = st.count > 0 && k == st.first - 1;
+		if (!forward && !backward) {
+			st.misses = std::max<int64_t>(st.misses, 0) + 1;
+		}
+		// A run that cannot be loaded (an Array element of another type) falls
+		// back to the forward run, which loads k alone if it must.
+		const bool fallible = variant_type(*subject) == Variant::ARRAY;
+		const auto load = [&](gaddr_t buffer, int64_t from, int64_t max_count) -> int64_t {
+			if (!fallible) {
+				return window_transfer(machine, emu, index, *subject, n, buffer, 0, 0, from, max_count, element_type);
+			}
+			try {
+				return window_transfer(machine, emu, index, *subject, n, buffer, 0, 0, from, max_count, element_type);
+			} catch (const std::runtime_error &) {
+				return 0;
+			}
+		};
+		if (n <= WINDOW_FRAME_ELEMENTS) {
+			first = 0;
+			count = load(frame, 0, n);
+		} else if (!forward && !backward && st.misses * WINDOW_FRAME_ELEMENTS >= n &&
+				size_t(n) * size <= WINDOW_COPY_MAX_BYTES) {
+			const gaddr_t data = emu.create_window_copy(state_addr, size_t(n) * size);
+			if (data != 0) {
+				first = 0;
+				count = load(data, 0, n);
+				if (count == n) {
+					base = data;
+				} else {
+					emu.release_window_copy(state_addr);
+					count = 0;
+				}
+			}
+		} else if (backward) {
+			first = std::max<int64_t>(0, p - (WINDOW_FRAME_ELEMENTS - 1));
+			count = load(frame, first, p - first + 1);
+		}
+		if (count <= p - first) {
+			first = p;
+			count = window_transfer(machine, emu, index, *subject, n, frame, 0, 0, p, WINDOW_FRAME_ELEMENTS, element_type);
+		}
+		moved += count;
+	}
+	PENALIZE(1'000 + 4 * moved);
+
+	if (base != frame) {
+		st.first = 0;
+		st.count = 0;
+		st.base = base;
+		st.heap = n;
+	} else {
+		// The run in k's own sign, which is how the guest compares.
+		st.first = (k < 0 ? first - n : first);
+		st.count = count;
+		st.heap = 0;
+	}
+	machine.set_result(base + gaddr_t(p - first) * size);
 }
 
 static constexpr bool dictionary_operate_operator(int variant_op) {
@@ -4883,6 +5086,7 @@ void Sandbox::initialize_syscalls() {
 			{ ECALL_ARRAY_SIZE, api_array_size },
 			{ ECALL_ARRAY_BATCH, api_array_batch },
 			{ ECALL_ARRAY_WINDOW, api_array_window },
+			{ ECALL_ARRAY_WINDOW_SEEK, api_array_window_seek },
 
 			{ ECALL_DICTIONARY_OPS, api_dict_ops },
 

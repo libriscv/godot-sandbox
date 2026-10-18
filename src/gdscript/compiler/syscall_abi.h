@@ -36,6 +36,7 @@ constexpr SyscallABI syscall_abi(unsigned number, int64_t operation = -1) {
 	case ECALL_ARRAY_SIZE: return {1, 1, true};
 	case ECALL_ARRAY_BATCH: return {4, 1, true};
 	case ECALL_ARRAY_WINDOW: return {7, 1, true};
+	case ECALL_ARRAY_WINDOW_SEEK: return {5, 1, true};
 	case ECALL_DICTIONARY_OPS:
 		if (operation == int(Dictionary_Op::GET_SIZE)) return {2, 1, true};
 		if (operation >= int(Dictionary_Op::OPERATE) && operation <= int(Dictionary_Op::OPERATE_RAW_STR))

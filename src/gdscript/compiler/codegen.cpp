@@ -10963,8 +10963,8 @@ bool CodeGenerator::gen_element_store_direct(int obj_reg, int idx_reg, int value
 // such a T -- the loop instead keeps up to 256 raw elements in a frame buffer
 // (IRFunction::array_windows) and an element costs a bounds compare and a load.
 // A miss refills the window with one ecall that also writes back what the loop
-// changed, and a refill that comes back empty leaves the index to the ordinary
-// access, which wraps a negative index or throws as it always did.
+// changed; once misses stop following the last run, the host moves the whole
+// array into a heap copy instead, so random access costs a load as well.
 //
 // Nothing outside the loop may see the array while the window holds it, so the
 // body must touch it only as `a[k]`, `a.size()` or `len(a)`, and may run nothing

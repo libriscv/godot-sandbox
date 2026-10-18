@@ -150,7 +150,19 @@
 // Raw elements of a typed or packed array
 #define ECALL_ARRAY_WINDOW (GAME_API_BASE + 67)
 
-#define ECALL_LAST (GAME_API_BASE + 68)
+// A typed array window kept by the host. a0 = array scoped index, a1 = window
+// state, a2 = element index, a3 = element type, a4 = ARRAY_WINDOW_SEEK_* op.
+// The state is six int64 words -- first, count, dirty, base, misses, heap --
+// followed by ARRAY_WINDOW_FRAME_ELEMENTS elements holding the run [first,
+// first + count). A heap run instead holds all `heap` elements at base, and
+// count is 0. SEEK writes back a dirty run, loads one holding k and returns its
+// address. FLUSH writes back and frees a heap run.
+#define ECALL_ARRAY_WINDOW_SEEK (GAME_API_BASE + 68)
+#define ARRAY_WINDOW_SEEK_LOAD 0
+#define ARRAY_WINDOW_SEEK_FLUSH 1
+#define ARRAY_WINDOW_FRAME_ELEMENTS 256
+
+#define ECALL_LAST (GAME_API_BASE + 69)
 
 #define STRINGIFY_HELPER(x) #x
 #define STRINGIFY(x) STRINGIFY_HELPER(x)
