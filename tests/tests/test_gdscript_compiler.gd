@@ -9277,6 +9277,30 @@ func computed(dir, name):
 # comes back intact across calls that reset the scoped state it was captured in.
 
 const AWAIT_SOURCE := """
+var typed_member: Dictionary = {"value": 0}
+var untyped_member = null
+
+func hold_the_typed_member(sig):
+	var held = typed_member
+	await sig
+	var first = held["value"]
+	await sig
+	return [first, held["value"]]
+
+func hold_the_untyped_member(sig):
+	var held = untyped_member
+	await sig
+	var first = held["value"]
+	await sig
+	return [first, held["value"]]
+
+func replace_the_members(value):
+	typed_member = {"value": value}
+	untyped_member = {"value": value}
+
+func read_the_members():
+	return [typed_member["value"], untyped_member["value"]]
+
 func wait_for(sig, base):
 	var got = await sig
 	return base + got
@@ -9343,6 +9367,7 @@ func walk_without_suspending(text : String):
 """
 
 signal sgd_ping(value)
+signal sgd_other_ping(value)
 
 func _await_script(name : String):
 	var path = "user://temp_%s.sgd" % name
@@ -9482,17 +9507,13 @@ func test_sgd_await_resume_after_the_named_owner_is_freed():
 	(first.call("wait_then_self", sgd_ping) as Signal).connect(func(_v): completed[0] = true)
 	assert_eq(second.call("get_coroutine_count"), 1, "the frame is held")
 
+	# Freeing the owner retires its frames before get_name() can run.
 	first.free()
+	assert_true(completed[0], "freeing the owner completed the awaiter")
+	assert_eq(second.call("get_coroutine_count"), 0, "and retired the frame")
+
 	sgd_ping.emit(1)
-
-	assert_true(completed[0], "the resumed frame finished rather than taking the process down")
-	assert_eq(second.call("get_coroutine_count"), 0, "and it was retired")
-
-	# get_name() on the freed owner: the errors the resumed frame is expected to
-	# report, claimed here so the run stays clean.
-	assert_engine_error("Sandbox has no parent Node")
-	assert_engine_error("Object is Null")
-	assert_engine_error("Object is Null")
+	assert_eq(second.call("get_coroutine_count"), 0, "the signal no longer reaches it")
 
 	second.free()
 
@@ -9509,6 +9530,64 @@ func test_sgd_await_two_suspensions():
 	assert_eq(completed[0], null, "still suspended at the second await")
 	sgd_ping.emit(11)
 	assert_eq(completed[0], 16, "the accumulator survived both suspensions")
+
+	node.free()
+
+func _hold_the_members(node : Node, sig : Signal) -> Array:
+	var completed := [null, null]
+	(node.call("hold_the_typed_member", sig) as Signal).connect(
+		func(value): completed[0] = value)
+	(node.call("hold_the_untyped_member", sig) as Signal).connect(
+		func(value): completed[1] = value)
+	return completed
+
+func test_sgd_await_a_finished_coroutine_leaves_the_members_it_read():
+	# Coroutine cleanup must preserve member slots and other coroutines' slots.
+	var script = _await_script("await_member_retire")
+	if script == null:
+		return
+	var node = _await_node(script)
+	node.call("replace_the_members", 1)
+	var exceptions = node.get_exceptions()
+
+	var first := _hold_the_members(node, sgd_ping)
+	var second := _hold_the_members(node, sgd_other_ping)
+
+	sgd_ping.emit(0)
+	sgd_ping.emit(0)
+	assert_eq(first, [[1, 1], [1, 1]], "the first pair read the members across both awaits")
+	assert_eq(node.call("read_the_members"), [1, 1],
+		"the members outlived the coroutines that read them")
+
+	sgd_other_ping.emit(0)
+	sgd_other_ping.emit(0)
+	assert_eq(second, [[1, 1], [1, 1]],
+		"the second pair's locals outlived the first pair's retirement")
+	assert_eq(node.call("read_the_members"), [1, 1])
+	assert_eq(node.get_exceptions(), exceptions, "no handle went stale")
+
+	node.free()
+
+func test_sgd_await_a_local_keeps_a_member_the_owner_replaced():
+	# Replacing a member must preserve the suspended local's Dictionary reference.
+	var script = _await_script("await_member_replace")
+	if script == null:
+		return
+	var node = _await_node(script)
+	node.call("replace_the_members", 1)
+	var exceptions = node.get_exceptions()
+
+	var completed := _hold_the_members(node, sgd_ping)
+
+	node.call("replace_the_members", 2)
+	sgd_ping.emit(0)
+	node.call("replace_the_members", 3)
+	sgd_ping.emit(0)
+
+	assert_eq(completed, [[1, 1], [1, 1]],
+		"both locals kept the Dictionary they were assigned, typed and untyped")
+	assert_eq(node.call("read_the_members"), [3, 3], "the members hold the replacements")
+	assert_eq(node.get_exceptions(), exceptions, "no handle went stale")
 
 	node.free()
 

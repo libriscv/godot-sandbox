@@ -119,14 +119,20 @@ void Sandbox::reap_coroutines_for_instance(gaddr_t instance_base) {
 	}
 }
 
-// Promote scoped handles to permanent so they survive across calls.
+// Preserve frame values across calls in permanent slots owned by the frame.
 void Sandbox::promote_frame_handles(Coroutine &co) {
 	const size_t slot_size = sizeof(GuestVariant);
 	const size_t slots = co.frame.size() / slot_size;
 
 	std::vector<int32_t> kept;
+	// Map borrowed indices to copied indices, reusing copies for shared handles.
+	std::vector<std::pair<int32_t, int32_t>> copied;
 	std::vector<Coroutine::FrameObject> objects;
 	std::vector<Ref<RefCounted>> refs;
+
+	const auto contains = [](const std::vector<int32_t> &list, int32_t idx) {
+		return std::find(list.begin(), list.end(), idx) != list.end();
+	};
 
 	for (size_t i = 0; i < slots; i++) {
 		const size_t offset = i * slot_size;
@@ -134,14 +140,24 @@ void Sandbox::promote_frame_handles(Coroutine &co) {
 
 		if (gv->is_scoped_variant()) {
 			const int32_t idx = int32_t(gv->v.i);
-			if (this->is_permanent_variant(idx)) {
-				// Already promoted by an earlier suspension of this same frame.
-				if (this->permanent_index_valid(idx)) {
-					kept.push_back(idx);
-					continue;
-				}
+			const bool permanent = this->is_permanent_variant(idx);
+			if (permanent && !this->permanent_index_valid(idx)) {
 				gv->type = Variant::NIL;
 				gv->v.i = 0;
+				continue;
+			}
+			if (permanent && contains(co.promoted, idx)) {
+				if (!contains(kept, idx)) {
+					kept.push_back(idx);
+				}
+				continue;
+			}
+			// Copy borrowed handles into permanent slots owned by this frame.
+			// Releasing the original slots must not invalidate the frame's handles.
+			const auto prior = std::find_if(copied.begin(), copied.end(),
+					[idx](const std::pair<int32_t, int32_t> &entry) { return entry.first == idx; });
+			if (prior != copied.end()) {
+				gv->v.i = prior->second;
 				continue;
 			}
 			std::optional<const Variant *> var = this->get_scoped_variant(idx);
@@ -158,7 +174,7 @@ void Sandbox::promote_frame_handles(Coroutine &co) {
 				// The retire in coroutine_suspend()'s catch releases co.promoted, so this
 				// pass's slots have to be in it.
 				for (int32_t taken : kept) {
-					if (std::find(co.promoted.begin(), co.promoted.end(), taken) == co.promoted.end()) {
+					if (!contains(co.promoted, taken)) {
 						co.promoted.push_back(taken);
 					}
 				}
@@ -166,6 +182,7 @@ void Sandbox::promote_frame_handles(Coroutine &co) {
 			}
 			gv->v.i = perm;
 			kept.push_back(perm);
+			copied.emplace_back(idx, perm);
 			continue;
 		}
 
@@ -186,7 +203,7 @@ void Sandbox::promote_frame_handles(Coroutine &co) {
 
 	// Release slots no longer referenced by this suspension.
 	for (int32_t perm : co.promoted) {
-		if (std::find(kept.begin(), kept.end(), perm) == kept.end()) {
+		if (!contains(kept, perm)) {
 			this->release_permanent_variant(perm);
 		}
 	}
