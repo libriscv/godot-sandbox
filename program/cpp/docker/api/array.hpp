@@ -3,7 +3,7 @@
 #include "variant.hpp"
 
 class ArrayIterator;
-class ArrayProxy;
+struct ArrayProxy;
 
 struct Array {
 	constexpr Array() {} // DON'T TOUCH
