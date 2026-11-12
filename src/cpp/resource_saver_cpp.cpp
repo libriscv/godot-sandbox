@@ -430,9 +430,6 @@ Error ResourceFormatSaverCPP::_save(const Ref<Resource> &p_resource, const Strin
 	}
 	return Error::ERR_SCRIPT_FAILED;
 }
-Error ResourceFormatSaverCPP::_set_uid(const String &p_path, int64_t p_uid) {
-	return Error::OK;
-}
 bool ResourceFormatSaverCPP::_recognize(const Ref<Resource> &p_resource) const {
 	return fast_cast_to<CPPScript>(p_resource.ptr()) != nullptr;
 }

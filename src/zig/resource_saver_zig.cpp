@@ -77,9 +77,6 @@ Error ResourceFormatSaverZig::_save(const Ref<Resource> &p_resource, const Strin
 	}
 	return Error::ERR_SCRIPT_FAILED;
 }
-Error ResourceFormatSaverZig::_set_uid(const String &p_path, int64_t p_uid) {
-	return Error::OK;
-}
 bool ResourceFormatSaverZig::_recognize(const Ref<Resource> &p_resource) const {
 	return fast_cast_to<ZigScript>(p_resource.ptr()) != nullptr;
 }
