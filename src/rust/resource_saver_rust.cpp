@@ -103,9 +103,6 @@ Error ResourceFormatSaverRust::_save(const Ref<Resource> &p_resource, const Stri
 	}
 	return Error::ERR_SCRIPT_FAILED;
 }
-Error ResourceFormatSaverRust::_set_uid(const String &p_path, int64_t p_uid) {
-	return Error::OK;
-}
 bool ResourceFormatSaverRust::_recognize(const Ref<Resource> &p_resource) const {
 	return fast_cast_to<RustScript>(p_resource.ptr()) != nullptr;
 }
